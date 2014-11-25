@@ -1,0 +1,1244 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width initial-scale=1" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+
+    <title>make a shared_ptr from scratch</title>
+    <meta name="description" content="Thinking, coding.
+">
+
+    <link rel="stylesheet" href="/css/main.css">
+    <link rel="canonical" href="http://QAMichaelPeng.github.io/2014-11-20-sharepointer_1.html">
+</head>
+
+
+  <body>
+
+    <header class="site-header">
+
+  <div class="wrapper">
+
+    <a class="site-title" href="/">QAMichaelPeng</a>
+
+    <nav class="site-nav">
+      <a href="#" class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path fill="#424242" d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z"/>
+          <path fill="#424242" d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z"/>
+          <path fill="#424242" d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z"/>
+        </svg>
+      </a>
+
+      <div class="trigger">
+        
+          
+          <a class="page-link" href="/2014-11-20-sharepointer_1.html">make a shared_ptr from scratch</a>
+          
+        
+          
+          <a class="page-link" href="/2014-11-23-Catalan_numbers.html">Catalan number</a>
+          
+        
+          
+        
+      </div>
+    </nav>
+
+  </div>
+
+</header>
+
+
+    <div class="page-content">
+      <div class="wrapper">
+        <p>shared_ptr is a smart pointer since c++ 11 that will release you from managing the life cycle of objects shared among lots of components without an explicit owner. You can learn it from <a href="http://www.cplusplus.com/reference/memory/shared_ptr/">cplusplus.com</a>. For more details and practice, <a href="http://www.boost.org/doc/libs/1_57_0/libs/smart_ptr/shared_ptr.htm">boost</a> is a great resource.</p>
+
+<p>Let’s consider an interesting question: how to build a shared_ptr from the scratch.</p>
+
+<ul>
+  <li>You must have some mechanism to manage the reference count.</li>
+  <li>The reference count operation should be thread safe.</li>
+  <li>The reference count instance should be shared between several copies of shared_ptr, so it should be aggregated as a pointer, not composed in a shared_ptr.</li>
+  <li>Reference count object should destroy the object if needed. This makes the code of shared_ptr simple.</li>
+</ul>
+
+<p>Here comes the reference count class:</p>
+
+<div class="highlight"><pre><code class="language-c--" data-lang="c++"><span class="lineno"> 1</span> <span class="c1">// thread safe inc</span>
+<span class="lineno"> 2</span> <span class="kr">inline</span> <span class="kt">long</span> <span class="nf">atomic_inc</span><span class="p">(</span><span class="kt">long</span> <span class="k">volatile</span><span class="o">*</span> <span class="n">addend</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 3</span>     <span class="k">return</span> <span class="n">InterlockedIncrement</span><span class="p">(</span><span class="n">addend</span><span class="p">);</span>
+<span class="lineno"> 4</span> <span class="p">}</span>
+<span class="lineno"> 5</span> 
+<span class="lineno"> 6</span> <span class="c1">// thread safe dec</span>
+<span class="lineno"> 7</span> <span class="kr">inline</span> <span class="kt">long</span> <span class="nf">atomic_dec</span><span class="p">(</span><span class="kt">long</span> <span class="k">volatile</span><span class="o">*</span> <span class="n">addend</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 8</span>     <span class="k">return</span> <span class="n">InterlockedDecrement</span><span class="p">(</span><span class="n">addend</span><span class="p">);</span>
+<span class="lineno"> 9</span> <span class="p">}</span>
+<span class="lineno">10</span> 
+<span class="lineno">11</span> <span class="c1">// Base class of ref count, handle all the logic of ref count</span>
+<span class="lineno">12</span> <span class="k">class</span> <span class="nc">RefCountBase</span> <span class="p">{</span>
+<span class="lineno">13</span>     <span class="kt">long</span> <span class="n">ref_count_</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+<span class="lineno">14</span> <span class="k">public</span><span class="o">:</span>
+<span class="lineno">15</span> 
+<span class="lineno">16</span>     <span class="n">RefCountBase</span><span class="p">(){</span>
+<span class="lineno">17</span>     <span class="p">}</span>
+<span class="lineno">18</span> 
+<span class="lineno">19</span>     <span class="n">RefCountBase</span><span class="p">(</span><span class="k">const</span> <span class="n">RefCountBase</span><span class="o">&amp;</span><span class="p">)</span> <span class="o">=</span> <span class="k">delete</span><span class="p">;</span>
+<span class="lineno">20</span> 
+<span class="lineno">21</span>     <span class="n">RefCountBase</span><span class="o">&amp;</span> <span class="k">operator</span><span class="o">=</span><span class="p">(</span><span class="k">const</span> <span class="n">RefCountBase</span><span class="o">&amp;</span><span class="p">)</span> <span class="o">=</span> <span class="k">delete</span><span class="p">;</span>
+<span class="lineno">22</span> 
+<span class="lineno">23</span>     <span class="k">virtual</span> <span class="o">~</span><span class="n">RefCountBase</span><span class="p">(){</span>
+<span class="lineno">24</span>     <span class="p">}</span>
+<span class="lineno">25</span> 
+<span class="lineno">26</span>     <span class="kt">void</span> <span class="n">Incref</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno">27</span>         <span class="n">atomic_inc</span><span class="p">(</span><span class="o">&amp;</span><span class="n">ref_count_</span><span class="p">);</span>
+<span class="lineno">28</span>     <span class="p">}</span>
+<span class="lineno">29</span> 
+<span class="lineno">30</span>     <span class="kt">void</span> <span class="n">Decref</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno">31</span>         <span class="k">if</span> <span class="p">(</span><span class="n">atomic_dec</span><span class="p">(</span><span class="o">&amp;</span><span class="n">ref_count_</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">32</span>             <span class="n">Destroy</span><span class="p">();</span>
+<span class="lineno">33</span>             <span class="c1">// when refcount == 0. delete the object itself</span>
+<span class="lineno">34</span>             <span class="c1">// so the owner needn&#39;t worry about when to releasing it</span>
+<span class="lineno">35</span>             <span class="n">DeleteThis</span><span class="p">();</span>
+<span class="lineno">36</span>         <span class="p">}</span>
+<span class="lineno">37</span>     <span class="p">}</span>
+<span class="lineno">38</span> 
+<span class="lineno">39</span>     <span class="kt">long</span> <span class="n">UseCount</span><span class="p">()</span> <span class="k">const</span> <span class="p">{</span>
+<span class="lineno">40</span>         <span class="k">return</span> <span class="n">ref_count_</span><span class="p">;</span>
+<span class="lineno">41</span>     <span class="p">}</span>
+<span class="lineno">42</span> 
+<span class="lineno">43</span>     <span class="c1">// destroy the resource</span>
+<span class="lineno">44</span>     <span class="k">virtual</span> <span class="kt">void</span> <span class="n">Destroy</span><span class="p">()</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+<span class="lineno">45</span> 
+<span class="lineno">46</span>     <span class="c1">// destroy the object by itselfs</span>
+<span class="lineno">47</span>     <span class="k">virtual</span> <span class="kt">void</span> <span class="n">DeleteThis</span><span class="p">()</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+<span class="lineno">48</span> <span class="p">};</span>
+<span class="lineno">49</span> 
+<span class="lineno">50</span> <span class="c1">// RefCount for pointer delete, use delete operator</span>
+<span class="lineno">51</span> <span class="c1">// the most common ref count</span>
+<span class="lineno">52</span> <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">T</span><span class="o">&gt;</span>
+<span class="lineno">53</span> <span class="k">class</span> <span class="nc">RefCount</span> <span class="o">:</span> <span class="k">public</span> <span class="n">RefCountBase</span> <span class="p">{</span>
+<span class="lineno">54</span>     <span class="n">T</span><span class="o">*</span> <span class="n">ptr_</span><span class="p">;</span>
+<span class="lineno">55</span> <span class="k">public</span><span class="o">:</span>
+<span class="lineno">56</span>     <span class="n">RefCount</span><span class="p">(</span><span class="n">T</span><span class="o">*</span> <span class="n">ptr</span><span class="p">)</span> <span class="o">:</span><span class="n">ptr_</span><span class="p">(</span><span class="n">ptr</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">57</span> 
+<span class="lineno">58</span>     <span class="p">}</span>
+<span class="lineno">59</span> 
+<span class="lineno">60</span>     <span class="n">RefCount</span><span class="p">(</span><span class="k">const</span> <span class="n">RefCount</span><span class="o">&amp;</span><span class="p">)</span> <span class="o">=</span> <span class="k">delete</span><span class="p">;</span>
+<span class="lineno">61</span> 
+<span class="lineno">62</span>     <span class="n">RefCount</span><span class="o">&amp;</span> <span class="k">operator</span><span class="o">=</span><span class="p">(</span><span class="n">RefCount</span><span class="o">&amp;</span><span class="p">)</span> <span class="o">=</span> <span class="k">delete</span><span class="p">;</span>
+<span class="lineno">63</span> 
+<span class="lineno">64</span>     <span class="k">virtual</span> <span class="o">~</span><span class="n">RefCount</span><span class="p">(){}</span>
+<span class="lineno">65</span> 
+<span class="lineno">66</span>     <span class="k">virtual</span> <span class="kt">void</span> <span class="n">Destroy</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno">67</span>         <span class="k">delete</span> <span class="n">ptr_</span><span class="p">;</span>
+<span class="lineno">68</span>         <span class="n">ptr_</span> <span class="o">=</span> <span class="k">nullptr</span><span class="p">;</span>
+<span class="lineno">69</span>     <span class="p">}</span>
+<span class="lineno">70</span> 
+<span class="lineno">71</span>     <span class="k">virtual</span> <span class="kt">void</span> <span class="n">DeleteThis</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno">72</span>         <span class="k">delete</span> <span class="k">this</span><span class="p">;</span>
+<span class="lineno">73</span>     <span class="p">}</span>
+<span class="lineno">74</span> <span class="p">};</span></code></pre></div>
+
+<p>Here we left Destroy and DeleteThis as pure virtual function in RefCountBase and implement it in RefCount. Because share_ptr can not only hold a object allocated by new, but also other resource that need a special destructor.
+Here’s the shared_ptr class.</p>
+
+<div class="highlight"><pre><code class="language-c--" data-lang="c++"><span class="lineno">  1</span> <span class="c1">// shared_ptr</span>
+<span class="lineno">  2</span> <span class="c1">// shared_ptr&lt;string&gt; p(new string(&quot;abc&quot;));</span>
+<span class="lineno">  3</span> <span class="c1">// shared_ptr&lt;string&gt; p2(p);</span>
+<span class="lineno">  4</span> <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">T</span><span class="o">&gt;</span>
+<span class="lineno">  5</span> <span class="k">class</span> <span class="nc">shared_ptr</span> <span class="p">{</span>
+<span class="lineno">  6</span> <span class="k">private</span><span class="o">:</span>
+<span class="lineno">  7</span>     <span class="n">RefCountBase</span><span class="o">*</span> <span class="n">pref_</span><span class="p">;</span>
+<span class="lineno">  8</span>     <span class="n">T</span><span class="o">*</span> <span class="n">ptr_</span><span class="p">;</span>
+<span class="lineno">  9</span> <span class="k">public</span><span class="o">:</span>
+<span class="lineno"> 10</span>     <span class="n">shared_ptr</span><span class="p">()</span><span class="o">:</span> <span class="n">pref_</span><span class="p">(</span><span class="k">nullptr</span><span class="p">),</span> <span class="n">ptr_</span><span class="p">(</span><span class="k">nullptr</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 11</span>     <span class="p">}</span>
+<span class="lineno"> 12</span> 
+<span class="lineno"> 13</span>     <span class="n">shared_ptr</span><span class="p">(</span><span class="kt">nullptr_t</span><span class="p">)</span> <span class="o">:</span><span class="n">pref_</span><span class="p">(</span><span class="k">nullptr</span><span class="p">),</span> <span class="n">ptr_</span><span class="p">(</span><span class="k">nullptr</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 14</span>     <span class="p">}</span>
+<span class="lineno"> 15</span> 
+<span class="lineno"> 16</span>     <span class="k">template</span><span class="o">&lt;</span><span class="k">class</span> <span class="nc">U</span><span class="o">&gt;</span> <span class="k">explicit</span> <span class="n">shared_ptr</span><span class="p">(</span><span class="n">U</span><span class="o">*</span> <span class="n">ptr</span><span class="p">)</span><span class="o">:</span> <span class="n">pref_</span><span class="p">(</span><span class="k">new</span> <span class="n">RefCount</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">(</span><span class="n">ptr</span><span class="p">)),</span> <span class="n">ptr_</span><span class="p">(</span><span class="n">ptr</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 17</span>     <span class="p">}</span>
+<span class="lineno"> 18</span> 
+<span class="lineno"> 19</span>     
+<span class="lineno"> 20</span>     <span class="n">shared_ptr</span><span class="p">(</span><span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&amp;</span> <span class="n">rhs</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 21</span>         <span class="n">reset</span><span class="p">(</span><span class="n">rhs</span><span class="p">.</span><span class="n">ptr_</span><span class="p">,</span> <span class="n">rhs</span><span class="p">.</span><span class="n">pref_</span><span class="p">);</span>
+<span class="lineno"> 22</span>     <span class="p">}</span>
+<span class="lineno"> 23</span>     
+<span class="lineno"> 24</span>     <span class="k">template</span><span class="o">&lt;</span><span class="k">class</span> <span class="nc">U</span><span class="o">&gt;</span> <span class="n">shared_ptr</span><span class="p">(</span><span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">U</span><span class="o">&gt;&amp;</span> <span class="n">rhs</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 25</span>         <span class="n">reset</span><span class="p">(</span><span class="n">rhs</span><span class="p">.</span><span class="n">ptr_</span><span class="p">,</span> <span class="n">rhs</span><span class="p">.</span><span class="n">pref_</span><span class="p">);</span>
+<span class="lineno"> 26</span>     <span class="p">}</span>
+<span class="lineno"> 27</span>     
+<span class="lineno"> 28</span>     <span class="n">shared_ptr</span><span class="p">(</span><span class="n">shared_ptr</span><span class="o">&amp;&amp;</span> <span class="n">rhs</span><span class="p">)</span><span class="o">:</span> <span class="n">pref_</span><span class="p">(</span><span class="n">rhs</span><span class="p">.</span><span class="n">pref_</span><span class="p">),</span> <span class="n">ptr_</span><span class="p">(</span><span class="n">rhs</span><span class="p">.</span><span class="n">ptr_</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 29</span>         <span class="n">rhs</span><span class="p">.</span><span class="n">pref_</span> <span class="o">=</span> <span class="k">nullptr</span><span class="p">;</span>
+<span class="lineno"> 30</span>         <span class="n">rhs</span><span class="p">.</span><span class="n">ptr_</span> <span class="o">=</span> <span class="k">nullptr</span><span class="p">;</span>
+<span class="lineno"> 31</span>     <span class="p">}</span>
+<span class="lineno"> 32</span>     
+<span class="lineno"> 33</span>     <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">U</span><span class="o">&gt;</span> <span class="n">shared_ptr</span><span class="p">(</span><span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">U</span><span class="o">&gt;&amp;&amp;</span> <span class="n">rhs</span><span class="p">)</span> <span class="o">:</span> <span class="n">pref_</span><span class="p">(</span><span class="n">rhs</span><span class="p">.</span><span class="n">pref_</span><span class="p">),</span> <span class="n">ptr_</span><span class="p">(</span><span class="n">rhs</span><span class="p">.</span><span class="n">ptr_</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 34</span>         <span class="n">rhs</span><span class="p">.</span><span class="n">pref_</span> <span class="o">=</span> <span class="k">nullptr</span><span class="p">;</span>
+<span class="lineno"> 35</span>         <span class="n">rhs</span><span class="p">.</span><span class="n">ptr_</span> <span class="o">=</span> <span class="k">nullptr</span><span class="p">;</span>
+<span class="lineno"> 36</span>     <span class="p">}</span>
+<span class="lineno"> 37</span>     
+<span class="lineno"> 38</span>     <span class="n">shared_ptr</span><span class="o">&amp;</span> <span class="k">operator</span><span class="o">=</span><span class="p">(</span><span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&amp;</span> <span class="n">rhs</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 39</span>         <span class="n">reset</span><span class="p">(</span><span class="n">rhs</span><span class="p">.</span><span class="n">ptr_</span><span class="p">,</span> <span class="n">rhs</span><span class="p">.</span><span class="n">pref_</span><span class="p">);</span>
+<span class="lineno"> 40</span>         <span class="k">return</span> <span class="o">*</span><span class="k">this</span><span class="p">;</span>
+<span class="lineno"> 41</span>     <span class="p">}</span>
+<span class="lineno"> 42</span>     
+<span class="lineno"> 43</span>     <span class="k">template</span><span class="o">&lt;</span><span class="k">class</span> <span class="nc">U</span><span class="o">&gt;</span>
+<span class="lineno"> 44</span>     <span class="n">shared_ptr</span><span class="o">&amp;</span> <span class="k">operator</span><span class="o">=</span><span class="p">(</span><span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">U</span><span class="o">&gt;&amp;</span> <span class="n">rhs</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 45</span>         <span class="n">reset</span><span class="p">(</span><span class="n">rhs</span><span class="p">.</span><span class="n">ptr_</span><span class="p">,</span> <span class="n">rhs</span><span class="p">.</span><span class="n">pref_</span><span class="p">);</span>
+<span class="lineno"> 46</span>         <span class="k">return</span> <span class="o">*</span><span class="k">this</span><span class="p">;</span>
+<span class="lineno"> 47</span>     <span class="p">}</span>
+<span class="lineno"> 48</span>     
+<span class="lineno"> 49</span>     <span class="n">shared_ptr</span><span class="o">&amp;</span> <span class="k">operator</span><span class="o">=</span><span class="p">(</span><span class="n">shared_ptr</span><span class="o">&amp;&amp;</span> <span class="n">rhs</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 50</span>         <span class="n">std</span><span class="o">::</span><span class="n">swap</span><span class="p">(</span><span class="n">pref_</span><span class="p">,</span> <span class="n">rhs</span><span class="p">.</span><span class="n">pref_</span><span class="p">);</span>
+<span class="lineno"> 51</span>         <span class="n">std</span><span class="o">::</span><span class="n">swap</span><span class="p">(</span><span class="n">ptr_</span><span class="p">,</span> <span class="n">rhs</span><span class="p">.</span><span class="n">ptr_</span><span class="p">);</span>
+<span class="lineno"> 52</span>         <span class="k">return</span> <span class="o">*</span><span class="k">this</span><span class="p">;</span>
+<span class="lineno"> 53</span>     <span class="p">}</span>
+<span class="lineno"> 54</span>     
+<span class="lineno"> 55</span>     <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">U</span><span class="o">&gt;</span>
+<span class="lineno"> 56</span>     <span class="n">shared_ptr</span><span class="o">&amp;</span> <span class="k">operator</span><span class="o">=</span><span class="p">(</span><span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">U</span><span class="o">&gt;&amp;&amp;</span> <span class="n">rhs</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 57</span>         <span class="c1">// can&#39;t swap internal fields directly</span>
+<span class="lineno"> 58</span>         <span class="c1">// assigning from U to T is one way</span>
+<span class="lineno"> 59</span>         <span class="n">shared_ptr</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">rhs</span><span class="p">)).</span><span class="n">swap</span><span class="p">(</span><span class="o">*</span><span class="k">this</span><span class="p">);</span>
+<span class="lineno"> 60</span>         <span class="k">return</span> <span class="o">*</span><span class="k">this</span><span class="p">;</span>
+<span class="lineno"> 61</span>     <span class="p">}</span>
+<span class="lineno"> 62</span>     
+<span class="lineno"> 63</span>     <span class="o">~</span><span class="n">shared_ptr</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno"> 64</span>         <span class="n">Decref</span><span class="p">();</span>
+<span class="lineno"> 65</span>     <span class="p">}</span>
+<span class="lineno"> 66</span>     
+<span class="lineno"> 67</span>     <span class="kt">void</span> <span class="n">reset</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno"> 68</span>         <span class="n">reset</span><span class="p">(</span><span class="k">nullptr</span><span class="p">,</span> <span class="k">nullptr</span><span class="p">);</span>
+<span class="lineno"> 69</span>     <span class="p">}</span>
+<span class="lineno"> 70</span>     
+<span class="lineno"> 71</span>     <span class="n">T</span><span class="o">&amp;</span> <span class="k">operator</span><span class="o">*</span><span class="p">()</span> <span class="k">const</span> <span class="p">{</span>
+<span class="lineno"> 72</span>         <span class="k">return</span> <span class="o">*</span><span class="p">(</span><span class="n">get</span><span class="p">());</span>
+<span class="lineno"> 73</span>     <span class="p">}</span>
+<span class="lineno"> 74</span>     
+<span class="lineno"> 75</span>     <span class="n">T</span><span class="o">*</span> <span class="n">get</span><span class="p">()</span> <span class="k">const</span> <span class="p">{</span>
+<span class="lineno"> 76</span>         <span class="k">return</span> <span class="n">ptr_</span><span class="p">;</span>
+<span class="lineno"> 77</span>     <span class="p">}</span>
+<span class="lineno"> 78</span>     
+<span class="lineno"> 79</span>     <span class="n">T</span><span class="o">*</span> <span class="k">operator</span><span class="o">-&gt;</span><span class="p">()</span> <span class="k">const</span> <span class="p">{</span>
+<span class="lineno"> 80</span>         <span class="k">return</span> <span class="n">get</span><span class="p">();</span>
+<span class="lineno"> 81</span>     <span class="p">}</span>
+<span class="lineno"> 82</span>     
+<span class="lineno"> 83</span>     <span class="kt">void</span> <span class="n">swap</span><span class="p">(</span><span class="n">shared_ptr</span><span class="o">&amp;</span> <span class="n">x</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 84</span>         <span class="n">std</span><span class="o">::</span><span class="n">swap</span><span class="p">(</span><span class="n">ptr_</span><span class="p">,</span> <span class="n">x</span><span class="p">.</span><span class="n">ptr_</span><span class="p">);</span>
+<span class="lineno"> 85</span>         <span class="n">std</span><span class="o">::</span><span class="n">swap</span><span class="p">(</span><span class="n">pref_</span><span class="p">,</span> <span class="n">x</span><span class="p">.</span><span class="n">pref_</span><span class="p">);</span>
+<span class="lineno"> 86</span>     <span class="p">}</span>
+<span class="lineno"> 87</span>     
+<span class="lineno"> 88</span>     <span class="kt">long</span> <span class="n">use_count</span><span class="p">()</span> <span class="k">const</span> <span class="p">{</span>
+<span class="lineno"> 89</span>         <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">pref_</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 90</span>             <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+<span class="lineno"> 91</span>         <span class="p">}</span>
+<span class="lineno"> 92</span>         <span class="k">return</span> <span class="n">pref_</span><span class="o">-&gt;</span><span class="n">UseCount</span><span class="p">();</span>
+<span class="lineno"> 93</span>     <span class="p">}</span>
+<span class="lineno"> 94</span> 
+<span class="lineno"> 95</span>     <span class="kt">bool</span> <span class="n">unique</span><span class="p">()</span> <span class="k">const</span> <span class="p">{</span>
+<span class="lineno"> 96</span>         <span class="k">return</span> <span class="n">use_count</span><span class="p">()</span> <span class="o">==</span> <span class="mi">1</span><span class="p">;</span>
+<span class="lineno"> 97</span>     <span class="p">}</span>
+<span class="lineno"> 98</span> 
+<span class="lineno"> 99</span>     <span class="k">explicit</span> <span class="k">operator</span> <span class="kt">bool</span><span class="p">()</span> <span class="k">const</span> <span class="p">{</span>
+<span class="lineno">100</span>         <span class="k">return</span> <span class="n">get</span><span class="p">()</span> <span class="o">!=</span> <span class="k">nullptr</span><span class="p">;</span>
+<span class="lineno">101</span>     <span class="p">}</span>
+<span class="lineno">102</span> 
+<span class="lineno">103</span>     <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">U</span><span class="o">&gt;</span> <span class="kt">bool</span> <span class="n">owner_before</span><span class="p">(</span><span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">U</span><span class="o">&gt;&amp;</span> <span class="n">rhs</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">104</span>         <span class="k">return</span> <span class="n">ptr_</span> <span class="o">&lt;</span> <span class="n">rhs</span><span class="p">.</span><span class="n">ptr_</span><span class="p">;</span>
+<span class="lineno">105</span>     <span class="p">}</span>
+<span class="lineno">106</span> <span class="k">private</span><span class="o">:</span>
+<span class="lineno">107</span>     <span class="kt">void</span> <span class="n">reset</span><span class="p">(</span><span class="n">T</span><span class="o">*</span> <span class="n">ptr</span><span class="p">,</span> <span class="n">RefCountBase</span><span class="o">*</span> <span class="n">refCount</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">108</span>         <span class="k">if</span> <span class="p">(</span><span class="n">pref_</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">109</span>             <span class="n">pref_</span><span class="o">-&gt;</span><span class="n">Decref</span><span class="p">();</span>
+<span class="lineno">110</span>         <span class="p">}</span>
+<span class="lineno">111</span>         <span class="n">ptr_</span> <span class="o">=</span> <span class="n">ptr</span><span class="p">;</span>
+<span class="lineno">112</span>         <span class="n">pref_</span> <span class="o">=</span> <span class="n">refCount</span><span class="p">;</span>
+<span class="lineno">113</span>         <span class="k">if</span> <span class="p">(</span><span class="n">refCount</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">114</span>             <span class="n">refCount</span><span class="o">-&gt;</span><span class="n">Incref</span><span class="p">();</span>
+<span class="lineno">115</span>         <span class="p">}</span>
+<span class="lineno">116</span>     <span class="p">}</span>
+<span class="lineno">117</span>     
+<span class="lineno">118</span>     <span class="kt">void</span> <span class="n">Decref</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno">119</span>         <span class="k">if</span> <span class="p">(</span><span class="n">pref_</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">120</span>             <span class="n">pref_</span><span class="o">-&gt;</span><span class="n">Decref</span><span class="p">();</span>
+<span class="lineno">121</span>             <span class="n">pref_</span> <span class="o">=</span> <span class="k">nullptr</span><span class="p">;</span>
+<span class="lineno">122</span>         <span class="p">}</span>
+<span class="lineno">123</span>     <span class="p">}</span>
+<span class="lineno">124</span> 
+<span class="lineno">125</span>     <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">U</span><span class="o">&gt;</span>
+<span class="lineno">126</span>         <span class="k">friend</span> <span class="k">class</span> <span class="nc">shared_ptr</span><span class="p">;</span>
+<span class="lineno">127</span> <span class="p">};</span></code></pre></div>
+
+<p>To support customize deleter, we should add another class RefCountDel whose constructor accept a second argument deletor.</p>
+
+<div class="highlight"><pre><code class="language-c--" data-lang="c++"><span class="lineno"> 1</span> <span class="c1">// handle resources with deleter</span>
+<span class="lineno"> 2</span> <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">T</span><span class="p">,</span> <span class="k">class</span> <span class="nc">D</span><span class="o">&gt;</span>
+<span class="lineno"> 3</span> <span class="k">class</span> <span class="nc">RefCountDel</span><span class="o">:</span> <span class="k">public</span> <span class="n">RefCountBase</span> <span class="p">{</span>
+<span class="lineno"> 4</span> <span class="k">private</span><span class="o">:</span>
+<span class="lineno"> 5</span>     <span class="n">T</span><span class="o">*</span> <span class="n">ptr_</span><span class="p">;</span>
+<span class="lineno"> 6</span>     <span class="n">D</span> <span class="n">del_</span><span class="p">;</span>
+<span class="lineno"> 7</span> <span class="k">public</span><span class="o">:</span>
+<span class="lineno"> 8</span>     <span class="n">RefCountDel</span><span class="p">(</span><span class="n">T</span><span class="o">*</span> <span class="n">ptr</span><span class="p">,</span> <span class="n">D</span> <span class="n">del</span><span class="p">)</span> <span class="o">:</span> <span class="n">ptr_</span><span class="p">(</span><span class="n">ptr</span><span class="p">),</span> <span class="n">del_</span><span class="p">(</span><span class="n">del</span><span class="p">)</span> <span class="p">{}</span>
+<span class="lineno"> 9</span> 
+<span class="lineno">10</span>     <span class="n">RefCountDel</span><span class="p">(</span><span class="k">const</span> <span class="n">RefCountDel</span><span class="o">&amp;</span><span class="p">)</span> <span class="o">=</span> <span class="k">delete</span><span class="p">;</span>
+<span class="lineno">11</span> 
+<span class="lineno">12</span>     <span class="n">RefCountDel</span><span class="o">&amp;</span> <span class="k">operator</span><span class="o">=</span><span class="p">(</span><span class="k">const</span> <span class="n">RefCountDel</span><span class="o">&amp;</span><span class="p">)</span> <span class="o">=</span> <span class="k">delete</span><span class="p">;</span>
+<span class="lineno">13</span> 
+<span class="lineno">14</span>     <span class="k">virtual</span> <span class="kt">void</span> <span class="nf">DeleteThis</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno">15</span>         <span class="k">delete</span> <span class="k">this</span><span class="p">;</span>
+<span class="lineno">16</span>     <span class="p">}</span>
+<span class="lineno">17</span> 
+<span class="lineno">18</span>     <span class="k">virtual</span> <span class="kt">void</span> <span class="nf">Destroy</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno">19</span>         <span class="n">del_</span><span class="p">(</span><span class="n">ptr_</span><span class="p">);</span>
+<span class="lineno">20</span>     <span class="p">}</span>
+<span class="lineno">21</span> <span class="p">};</span>
+<span class="lineno">22</span> 
+<span class="lineno">23</span> <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">T</span><span class="o">&gt;</span> <span class="n">shared_ptr</span> <span class="p">{</span>
+<span class="lineno">24</span>     <span class="c1">// ...</span>
+<span class="lineno">25</span>     <span class="k">template</span><span class="o">&lt;</span><span class="k">class</span> <span class="nc">U</span><span class="p">,</span> <span class="k">class</span> <span class="nc">D</span><span class="o">&gt;</span> <span class="n">shared_ptr</span><span class="p">(</span><span class="n">U</span><span class="o">*</span> <span class="n">ptr</span><span class="p">,</span> <span class="n">D</span> <span class="n">del</span><span class="p">)</span> <span class="o">:</span> <span class="n">pref_</span><span class="p">(</span><span class="k">new</span> <span class="n">RefCountDel</span><span class="o">&lt;</span><span class="n">U</span><span class="p">,</span> <span class="n">D</span><span class="o">&gt;</span><span class="p">(</span><span class="n">ptr</span><span class="p">,</span> <span class="n">del</span><span class="p">)),</span> <span class="n">ptr_</span><span class="p">(</span><span class="n">ptr</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">26</span>     <span class="p">}</span>
+<span class="lineno">27</span> 
+<span class="lineno">28</span>     <span class="k">template</span><span class="o">&lt;</span><span class="k">class</span> <span class="nc">D</span><span class="o">&gt;</span> <span class="n">shared_ptr</span><span class="p">(</span><span class="kt">nullptr_t</span><span class="p">,</span> <span class="n">D</span> <span class="n">del</span><span class="p">)</span> <span class="o">:</span> <span class="n">pref_</span><span class="p">(</span><span class="k">new</span> <span class="n">RefCountDel</span><span class="o">&lt;</span><span class="n">T</span><span class="p">,</span> <span class="n">D</span><span class="o">&gt;</span><span class="p">(</span><span class="k">nullptr</span><span class="p">,</span> <span class="n">del</span><span class="p">)),</span> <span class="n">ptr_</span><span class="p">(</span><span class="k">nullptr</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">29</span>     <span class="p">}</span>
+<span class="lineno">30</span>     <span class="c1">// ...</span>
+<span class="lineno">31</span> <span class="p">};</span></code></pre></div>
+
+<p>shared_ptr in C++ 11 doesn’t support array. We can extend our shared_ptr to support it. To support array, we should create shared_ptr with a customized deleter, like this:</p>
+
+<div class="highlight"><pre><code class="language-c--" data-lang="c++"><span class="lineno">1</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="kt">int</span><span class="o">&gt;</span> <span class="n">p</span><span class="p">(</span><span class="k">new</span> <span class="kt">int</span><span class="p">[</span><span class="mi">10</span><span class="p">],</span> <span class="n">std</span><span class="o">::</span><span class="n">default_delete</span><span class="o">&lt;</span><span class="kt">int</span><span class="p">[]</span><span class="o">&gt;</span><span class="p">());</span></code></pre></div>
+
+<p>But the above code looks a bit ugly. Since new array is used widely, we should try to elimate the second deleter argument.</p>
+
+<p>To fix it, we have following ways:</p>
+
+<ol>
+  <li>Create a specialization copy of sahred_ptr for array. This would work, but will introduce redundant codes.</li>
+  <li>Don’t create the RefCount class directly with new in shared_ptr. Instead create it with a template function that has a specialization copy for array.</li>
+</ol>
+
+<p>Here is the solution.</p>
+
+<div class="highlight"><pre><code class="language-c--" data-lang="c++"><span class="lineno"> 1</span> <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">T</span><span class="p">,</span> <span class="k">class</span> <span class="nc">U</span><span class="o">&gt;</span>
+<span class="lineno"> 2</span> <span class="n">RefCountBase</span><span class="o">*</span> <span class="n">CreateRefCount</span><span class="p">(</span><span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;*</span> <span class="cm">/* for template parameter deduction */</span><span class="p">,</span> <span class="n">U</span><span class="o">*</span> <span class="n">p</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 3</span>     <span class="k">return</span> <span class="k">new</span> <span class="n">RefCount</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">(</span><span class="n">p</span><span class="p">);</span>
+<span class="lineno"> 4</span> <span class="p">}</span>
+<span class="lineno"> 5</span> 
+<span class="lineno"> 6</span> <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">T</span><span class="o">&gt;</span>
+<span class="lineno"> 7</span> <span class="n">RefCountBase</span><span class="o">*</span> <span class="n">CreateRefCount</span><span class="p">(</span><span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="p">[]</span><span class="o">&gt;*</span> <span class="cm">/* for template parameter deduction */</span><span class="p">,</span> <span class="n">T</span><span class="o">*</span> <span class="n">p</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 8</span>     <span class="k">return</span> <span class="k">new</span> <span class="n">RefCountDel</span><span class="o">&lt;</span><span class="n">T</span><span class="p">,</span> <span class="n">std</span><span class="o">::</span><span class="n">default_delete</span><span class="o">&lt;</span><span class="n">T</span><span class="p">[]</span><span class="o">&gt;&gt;</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">std</span><span class="o">::</span><span class="n">default_delete</span><span class="o">&lt;</span><span class="n">T</span><span class="p">[]</span><span class="o">&gt;</span><span class="p">());</span>
+<span class="lineno"> 9</span> <span class="p">}</span>
+<span class="lineno">10</span> 
+<span class="lineno">11</span> <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">T</span><span class="o">&gt;</span>
+<span class="lineno">12</span> <span class="k">struct</span> <span class="n">sp_element</span>
+<span class="lineno">13</span> <span class="p">{</span>
+<span class="lineno">14</span>     <span class="k">typedef</span> <span class="n">T</span> <span class="n">type</span><span class="p">;</span>
+<span class="lineno">15</span> <span class="p">};</span>
+<span class="lineno">16</span> 
+<span class="lineno">17</span> <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">T</span><span class="o">&gt;</span>
+<span class="lineno">18</span> <span class="k">struct</span> <span class="n">sp_element</span><span class="o">&lt;</span><span class="n">T</span><span class="p">[]</span><span class="o">&gt;</span>
+<span class="lineno">19</span> <span class="p">{</span>
+<span class="lineno">20</span>     <span class="k">typedef</span> <span class="n">T</span> <span class="n">type</span><span class="p">;</span>
+<span class="lineno">21</span> <span class="p">};</span>
+<span class="lineno">22</span> 
+<span class="lineno">23</span> <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">T</span><span class="o">&gt;</span> <span class="n">shared_ptr</span> <span class="p">{</span>
+<span class="lineno">24</span>     <span class="c1">// if we use T* here and T is array type like int[], we&#39;ll have trouble</span>
+<span class="lineno">25</span>     <span class="k">typedef</span> <span class="k">typename</span> <span class="n">sp_element</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;::</span><span class="n">type</span> <span class="n">element_type</span><span class="p">;</span>
+<span class="lineno">26</span>     <span class="n">RefCountBase</span><span class="o">*</span> <span class="n">pref_</span><span class="p">;</span>
+<span class="lineno">27</span>     <span class="n">element_type</span><span class="o">*</span> <span class="n">ptr_</span><span class="p">;</span>
+<span class="lineno">28</span> <span class="k">public</span>
+<span class="lineno">29</span>     <span class="k">explicit</span> <span class="nf">shared_ptr</span><span class="p">(</span><span class="n">element_type</span><span class="o">*</span> <span class="n">ptr</span><span class="p">)</span> <span class="o">:</span> <span class="n">ptr_</span><span class="p">(</span><span class="n">ptr</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">30</span>         <span class="n">pref_</span> <span class="o">=</span> <span class="n">CreateRefCount</span><span class="p">(</span><span class="k">this</span><span class="p">,</span> <span class="n">ptr</span><span class="p">);</span>
+<span class="lineno">31</span>     <span class="p">}</span>
+<span class="lineno">32</span> 
+<span class="lineno">33</span>     <span class="k">template</span><span class="o">&lt;</span><span class="k">class</span> <span class="nc">U</span><span class="o">&gt;</span> <span class="k">explicit</span> <span class="n">shared_ptr</span><span class="p">(</span><span class="n">U</span><span class="o">*</span> <span class="n">ptr</span><span class="p">)</span><span class="o">:</span> <span class="n">ptr_</span><span class="p">(</span><span class="n">ptr</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">34</span>         <span class="n">pref_</span> <span class="o">=</span> <span class="n">CreateRefCount</span><span class="p">(</span><span class="k">this</span><span class="p">,</span> <span class="n">ptr</span><span class="p">);</span>
+<span class="lineno">35</span>     <span class="p">}</span>
+<span class="lineno">36</span> <span class="k">private</span><span class="o">:</span>
+<span class="lineno">37</span>     <span class="k">template</span><span class="o">&lt;</span><span class="k">class</span> <span class="nc">U</span><span class="o">&gt;</span>
+<span class="lineno">38</span>     <span class="kt">void</span> <span class="n">reset</span><span class="p">(</span><span class="n">U</span><span class="o">*</span> <span class="n">ptr</span><span class="p">,</span> <span class="n">RefCountBase</span><span class="o">*</span> <span class="n">refCount</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">39</span>         <span class="k">if</span> <span class="p">(</span><span class="n">pref_</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">40</span>             <span class="n">pref_</span><span class="o">-&gt;</span><span class="n">Decref</span><span class="p">();</span>
+<span class="lineno">41</span>         <span class="p">}</span>
+<span class="lineno">42</span>         <span class="n">ptr_</span> <span class="o">=</span> <span class="n">ptr</span><span class="p">;</span>
+<span class="lineno">43</span>         <span class="n">pref_</span> <span class="o">=</span> <span class="n">refCount</span><span class="p">;</span>
+<span class="lineno">44</span>         <span class="k">if</span> <span class="p">(</span><span class="n">refCount</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">45</span>             <span class="n">refCount</span><span class="o">-&gt;</span><span class="n">Incref</span><span class="p">();</span>
+<span class="lineno">46</span>         <span class="p">}</span>
+<span class="lineno">47</span>     <span class="p">}</span>
+<span class="lineno">48</span>     <span class="p">...</span>
+<span class="lineno">49</span> <span class="p">}</span></code></pre></div>
+
+<p>Alias constructor</p>
+
+<p>In shared_ptr we stored two pointers, one is the stored pointer ptr<em>, one is the ref count pointer pref</em>. Since pref_ has a copy of the stored pointer, why we store another copy in the shared_ptr object? This is for alias consturector. 
+Think about a scenario: you have a big object a in type A allocated by new, and it has a small field b with type B. You want to keep a shared_ptr for b, how can you do this?</p>
+
+<p>Since b is owned by a, you shouldn’t delete it by yourself with a shared_ptr. You can use it like:</p>
+
+<div class="highlight"><pre><code class="language-c--" data-lang="c++"><span class="lineno">1</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">a</span><span class="p">(</span><span class="k">new</span> <span class="n">A</span><span class="p">);</span>
+<span class="lineno">2</span> <span class="n">a</span><span class="p">.</span><span class="n">b</span><span class="o">-&gt;</span><span class="n">func</span><span class="p">(...)</span></code></pre></div>
+
+<p>But a.b-&gt;func(…) is not convenient as a-&gt;func(…). And you can’t keep a raw pointer to a.a without lifecycle managment. If a is destroyed, pointer to a.a will be dangling.</p>
+
+<p>Here comes alias constructor</p>
+
+<div class="highlight"><pre><code class="language-c--" data-lang="c++"><span class="lineno">1</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">a</span><span class="p">(</span><span class="k">new</span> <span class="n">A</span><span class="p">);</span>
+<span class="lineno">2</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">B</span><span class="o">&gt;</span> <span class="n">b</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">a</span><span class="p">.</span><span class="n">b</span><span class="p">);</span>
+<span class="lineno">3</span> <span class="n">b</span><span class="o">-&gt;</span><span class="n">func</span><span class="p">(...)</span></code></pre></div>
+
+<p>For more details. please see <a href="http://www.codesynthesis.com/~boris/blog/2012/04/25/shared-ptr-aliasing-constructor/">shared_ptr aliasing constructor</a>.</p>
+
+<p>Below is the implement:</p>
+
+<div class="highlight"><pre><code class="language-c--" data-lang="c++"><span class="lineno">1</span> <span class="c1">// aliasing</span>
+<span class="lineno">2</span> <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">U</span><span class="o">&gt;</span> <span class="n">shared_ptr</span><span class="p">(</span><span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">U</span><span class="o">&gt;&amp;</span> <span class="n">rhs</span><span class="p">,</span> <span class="n">element_type</span><span class="o">*</span> <span class="n">ptr</span><span class="p">)</span><span class="o">:</span><span class="n">ptr_</span><span class="p">(</span><span class="n">ptr</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">3</span>     <span class="n">pref_</span> <span class="o">=</span> <span class="n">rhs</span><span class="p">.</span><span class="n">pref_</span><span class="p">;</span>
+<span class="lineno">4</span>     <span class="k">if</span> <span class="p">(</span><span class="n">pref_</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">5</span>         <span class="n">pref_</span><span class="o">-&gt;</span><span class="n">Incref</span><span class="p">();</span>
+<span class="lineno">6</span>     <span class="p">}</span>
+<span class="lineno">7</span> <span class="p">}</span></code></pre></div>
+
+<p>So far everything is OK, except that to allocate an object with an shared_ptr, we need to new, one for the object itself, and another is for the refCount. How can we use only one memory allocation to allocate the two object? One idea is to put the stored object as a field of ref count object. We can know the object size at compile time, but how can we initialize it in the runtime with the infinite possibilities of constructor? Fortunatelly c++ 11 brings us <a href="http://en.wikipedia.org/wiki/Variadic_template">variadic template</a> and <a href="http://en.cppreference.com/w/cpp/utility/forward">perfect forwarding</a>. So we can use (placement new)[http://en.wikipedia.org/wiki/Placement_syntax] to initialize the stored object with arguments we don’t know in the templates.</p>
+
+<div class="highlight"><pre><code class="language-c--" data-lang="c++"><span class="lineno"> 1</span> <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">T</span><span class="o">&gt;</span>
+<span class="lineno"> 2</span> <span class="k">class</span> <span class="nc">RefCountObj</span><span class="o">:</span> <span class="k">public</span> <span class="n">RefCountBase</span> <span class="p">{</span>
+<span class="lineno"> 3</span> <span class="k">private</span><span class="o">:</span>
+<span class="lineno"> 4</span>     <span class="k">typename</span> <span class="n">std</span><span class="o">::</span><span class="n">aligned_storage</span><span class="o">&lt;</span><span class="k">sizeof</span><span class="p">(</span><span class="n">T</span><span class="p">)</span><span class="o">&gt;::</span><span class="n">type</span> <span class="n">storage_</span><span class="p">;</span>
+<span class="lineno"> 5</span> <span class="k">public</span><span class="o">:</span>
+<span class="lineno"> 6</span>     <span class="k">template</span><span class="o">&lt;</span><span class="n">class</span><span class="p">...</span> <span class="n">Types</span><span class="o">&gt;</span>
+<span class="lineno"> 7</span>     <span class="n">RefCountObj</span><span class="p">(</span><span class="n">Types</span><span class="p">...</span> <span class="n">args</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 8</span>         <span class="k">new</span> <span class="p">(</span><span class="o">&amp;</span><span class="n">storage_</span><span class="p">)</span><span class="n">T</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">forward</span><span class="o">&lt;</span><span class="n">Types</span><span class="o">&gt;</span><span class="p">(</span><span class="n">args</span><span class="p">)...);</span>
+<span class="lineno"> 9</span>     <span class="p">}</span>
+<span class="lineno">10</span> 
+<span class="lineno">11</span>     <span class="n">T</span><span class="o">*</span> <span class="n">Get</span><span class="p">()</span> <span class="k">const</span> <span class="p">{</span>
+<span class="lineno">12</span>         <span class="k">return</span> <span class="p">(</span><span class="n">T</span><span class="o">*</span><span class="p">)(</span><span class="o">&amp;</span><span class="n">storage_</span><span class="p">);</span>
+<span class="lineno">13</span>     <span class="p">}</span>
+<span class="lineno">14</span> 
+<span class="lineno">15</span>     <span class="k">virtual</span> <span class="kt">void</span> <span class="n">Destroy</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno">16</span>         <span class="n">Get</span><span class="p">()</span><span class="o">-&gt;~</span><span class="n">T</span><span class="p">();</span>
+<span class="lineno">17</span>     <span class="p">}</span>
+<span class="lineno">18</span> 
+<span class="lineno">19</span>     <span class="k">virtual</span> <span class="kt">void</span> <span class="n">DeleteThis</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno">20</span>         <span class="k">delete</span> <span class="k">this</span><span class="p">;</span>
+<span class="lineno">21</span>     <span class="p">}</span>
+<span class="lineno">22</span> <span class="p">};</span>
+<span class="lineno">23</span> 
+<span class="lineno">24</span> <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">T</span><span class="p">,</span> <span class="n">class</span><span class="p">...</span> <span class="n">Types</span><span class="o">&gt;</span>
+<span class="lineno">25</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span> <span class="n">make_shared</span><span class="p">(</span><span class="n">Types</span><span class="o">&amp;&amp;</span><span class="p">...</span> <span class="n">args</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">26</span>     <span class="n">RefCountObj</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;*</span> <span class="n">obj</span> <span class="o">=</span> <span class="k">new</span> <span class="n">RefCountObj</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">forward</span><span class="o">&lt;</span><span class="n">Types</span><span class="o">&gt;</span><span class="p">(</span><span class="n">args</span><span class="p">)...);</span>
+<span class="lineno">27</span>     <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span> <span class="n">p</span><span class="p">;</span>
+<span class="lineno">28</span>     <span class="n">p</span><span class="p">.</span><span class="n">reset_ref_0</span><span class="p">(</span><span class="n">obj</span><span class="o">-&gt;</span><span class="n">Get</span><span class="p">(),</span> <span class="n">obj</span><span class="p">);</span>
+<span class="lineno">29</span>     <span class="k">return</span> <span class="n">p</span><span class="p">;</span>
+<span class="lineno">30</span> <span class="p">}</span></code></pre></div>
+
+<p>Here’s the full code list:</p>
+
+<div class="highlight"><pre><code class="language-c--" data-lang="c++"><span class="lineno">  1</span> <span class="cp">#pragma once</span>
+<span class="lineno">  2</span> <span class="cp">#ifdef _WIN32</span>
+<span class="lineno">  3</span> <span class="cp">#include &lt;windows.h&gt;</span>
+<span class="lineno">  4</span> <span class="cp">#endif</span>
+<span class="lineno">  5</span> <span class="cp">#include &lt;algorithm&gt;</span>
+<span class="lineno">  6</span> <span class="cp">#include &lt;cstddef&gt;</span>
+<span class="lineno">  7</span> <span class="cp">#include &lt;memory&gt;</span>
+<span class="lineno">  8</span> 
+<span class="lineno">  9</span> <span class="k">namespace</span> <span class="n">mp</span> <span class="p">{</span>
+<span class="lineno"> 10</span>     <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">T</span><span class="o">&gt;</span> <span class="k">class</span> <span class="nc">shared_ptr</span><span class="p">;</span>
+<span class="lineno"> 11</span>     <span class="c1">// thread safe inc</span>
+<span class="lineno"> 12</span>     <span class="kr">inline</span> <span class="kt">long</span> <span class="nf">atomic_inc</span><span class="p">(</span><span class="kt">long</span> <span class="k">volatile</span><span class="o">*</span> <span class="n">addend</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 13</span>         <span class="k">return</span> <span class="n">InterlockedIncrement</span><span class="p">(</span><span class="n">addend</span><span class="p">);</span>
+<span class="lineno"> 14</span>     <span class="p">}</span>
+<span class="lineno"> 15</span> 
+<span class="lineno"> 16</span>     <span class="c1">// thread safe dec</span>
+<span class="lineno"> 17</span>     <span class="kr">inline</span> <span class="kt">long</span> <span class="nf">atomic_dec</span><span class="p">(</span><span class="kt">long</span> <span class="k">volatile</span><span class="o">*</span> <span class="n">addend</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 18</span>         <span class="k">return</span> <span class="n">InterlockedDecrement</span><span class="p">(</span><span class="n">addend</span><span class="p">);</span>
+<span class="lineno"> 19</span>     <span class="p">}</span>
+<span class="lineno"> 20</span> 
+<span class="lineno"> 21</span>     <span class="c1">// Base class of ref count, handle all the logic of ref count</span>
+<span class="lineno"> 22</span>     <span class="k">class</span> <span class="nc">RefCountBase</span> <span class="p">{</span>
+<span class="lineno"> 23</span>         <span class="kt">long</span> <span class="n">ref_count_</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+<span class="lineno"> 24</span>     <span class="k">public</span><span class="o">:</span>
+<span class="lineno"> 25</span>         <span class="n">RefCountBase</span><span class="p">(){</span>
+<span class="lineno"> 26</span>         <span class="p">}</span>
+<span class="lineno"> 27</span>         <span class="n">RefCountBase</span><span class="p">(</span><span class="k">const</span> <span class="n">RefCountBase</span><span class="o">&amp;</span><span class="p">)</span> <span class="o">=</span> <span class="k">delete</span><span class="p">;</span>
+<span class="lineno"> 28</span>         <span class="n">RefCountBase</span><span class="o">&amp;</span> <span class="k">operator</span><span class="o">=</span><span class="p">(</span><span class="k">const</span> <span class="n">RefCountBase</span><span class="o">&amp;</span><span class="p">)</span> <span class="o">=</span> <span class="k">delete</span><span class="p">;</span>
+<span class="lineno"> 29</span> 
+<span class="lineno"> 30</span>         <span class="k">virtual</span> <span class="o">~</span><span class="n">RefCountBase</span><span class="p">(){</span>
+<span class="lineno"> 31</span>         <span class="p">}</span>
+<span class="lineno"> 32</span> 
+<span class="lineno"> 33</span>         <span class="kt">void</span> <span class="n">Incref</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno"> 34</span>             <span class="n">atomic_inc</span><span class="p">(</span><span class="o">&amp;</span><span class="n">ref_count_</span><span class="p">);</span>
+<span class="lineno"> 35</span>         <span class="p">}</span>
+<span class="lineno"> 36</span>         <span class="kt">void</span> <span class="n">Decref</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno"> 37</span>             <span class="k">if</span> <span class="p">(</span><span class="n">atomic_dec</span><span class="p">(</span><span class="o">&amp;</span><span class="n">ref_count_</span><span class="p">)</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 38</span>                 <span class="n">Destroy</span><span class="p">();</span>
+<span class="lineno"> 39</span>                 <span class="c1">// when refcount == 0. delete the object itself</span>
+<span class="lineno"> 40</span>                 <span class="c1">// so the owner needn&#39;t worry about when to releasing it</span>
+<span class="lineno"> 41</span>                 <span class="n">DeleteThis</span><span class="p">();</span>
+<span class="lineno"> 42</span>             <span class="p">}</span>
+<span class="lineno"> 43</span>         <span class="p">}</span>
+<span class="lineno"> 44</span>         <span class="kt">long</span> <span class="n">UseCount</span><span class="p">()</span> <span class="k">const</span> <span class="p">{</span>
+<span class="lineno"> 45</span>             <span class="k">return</span> <span class="n">ref_count_</span><span class="p">;</span>
+<span class="lineno"> 46</span>         <span class="p">}</span>
+<span class="lineno"> 47</span>         <span class="c1">// destroy the resource</span>
+<span class="lineno"> 48</span>         <span class="k">virtual</span> <span class="kt">void</span> <span class="n">Destroy</span><span class="p">()</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+<span class="lineno"> 49</span>         <span class="c1">// destroy the object by itselfs</span>
+<span class="lineno"> 50</span>         <span class="k">virtual</span> <span class="kt">void</span> <span class="n">DeleteThis</span><span class="p">()</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+<span class="lineno"> 51</span>     <span class="p">};</span>
+<span class="lineno"> 52</span> 
+<span class="lineno"> 53</span>     <span class="c1">// RefCount for pointer delete, use delete operator</span>
+<span class="lineno"> 54</span>     <span class="c1">// the most common ref count</span>
+<span class="lineno"> 55</span>     <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">T</span><span class="o">&gt;</span>
+<span class="lineno"> 56</span>     <span class="k">class</span> <span class="nc">RefCount</span> <span class="o">:</span> <span class="k">public</span> <span class="n">RefCountBase</span> <span class="p">{</span>
+<span class="lineno"> 57</span>         <span class="n">T</span><span class="o">*</span> <span class="n">ptr_</span><span class="p">;</span>
+<span class="lineno"> 58</span>     <span class="k">public</span><span class="o">:</span>
+<span class="lineno"> 59</span>         <span class="n">RefCount</span><span class="p">(</span><span class="n">T</span><span class="o">*</span> <span class="n">ptr</span><span class="p">)</span> <span class="o">:</span><span class="n">ptr_</span><span class="p">(</span><span class="n">ptr</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 60</span> 
+<span class="lineno"> 61</span>         <span class="p">}</span>
+<span class="lineno"> 62</span> 
+<span class="lineno"> 63</span>         <span class="n">RefCount</span><span class="p">(</span><span class="k">const</span> <span class="n">RefCount</span><span class="o">&amp;</span><span class="p">)</span> <span class="o">=</span> <span class="k">delete</span><span class="p">;</span>
+<span class="lineno"> 64</span> 
+<span class="lineno"> 65</span>         <span class="n">RefCount</span><span class="o">&amp;</span> <span class="k">operator</span><span class="o">=</span><span class="p">(</span><span class="n">RefCount</span><span class="o">&amp;</span><span class="p">)</span> <span class="o">=</span> <span class="k">delete</span><span class="p">;</span>
+<span class="lineno"> 66</span> 
+<span class="lineno"> 67</span>         <span class="k">virtual</span> <span class="o">~</span><span class="n">RefCount</span><span class="p">(){}</span>
+<span class="lineno"> 68</span> 
+<span class="lineno"> 69</span>         <span class="k">virtual</span> <span class="kt">void</span> <span class="n">Destroy</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno"> 70</span>             <span class="k">delete</span> <span class="n">ptr_</span><span class="p">;</span>
+<span class="lineno"> 71</span>             <span class="n">ptr_</span> <span class="o">=</span> <span class="k">nullptr</span><span class="p">;</span>
+<span class="lineno"> 72</span>         <span class="p">}</span>
+<span class="lineno"> 73</span> 
+<span class="lineno"> 74</span>         <span class="k">virtual</span> <span class="kt">void</span> <span class="n">DeleteThis</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno"> 75</span>             <span class="k">delete</span> <span class="k">this</span><span class="p">;</span>
+<span class="lineno"> 76</span>         <span class="p">}</span>
+<span class="lineno"> 77</span>     <span class="p">};</span>
+<span class="lineno"> 78</span> 
+<span class="lineno"> 79</span>     <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">T</span><span class="p">,</span> <span class="k">class</span> <span class="nc">D</span><span class="o">&gt;</span>
+<span class="lineno"> 80</span>     <span class="k">class</span> <span class="nc">RefCountDel</span><span class="o">:</span> <span class="k">public</span> <span class="n">RefCountBase</span> <span class="p">{</span>
+<span class="lineno"> 81</span>     <span class="k">private</span><span class="o">:</span>
+<span class="lineno"> 82</span>         <span class="n">T</span><span class="o">*</span> <span class="n">ptr_</span><span class="p">;</span>
+<span class="lineno"> 83</span>         <span class="n">D</span> <span class="n">del_</span><span class="p">;</span>
+<span class="lineno"> 84</span>     <span class="k">public</span><span class="o">:</span>
+<span class="lineno"> 85</span>         <span class="n">RefCountDel</span><span class="p">(</span><span class="n">T</span><span class="o">*</span> <span class="n">ptr</span><span class="p">,</span> <span class="n">D</span> <span class="n">del</span><span class="p">)</span><span class="o">:</span> <span class="n">ptr_</span><span class="p">(</span><span class="n">ptr</span><span class="p">),</span> <span class="n">del_</span><span class="p">(</span><span class="n">del</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 86</span>         <span class="p">}</span>
+<span class="lineno"> 87</span> 
+<span class="lineno"> 88</span>         <span class="n">RefCountDel</span><span class="p">(</span><span class="k">const</span> <span class="n">RefCountDel</span><span class="o">&amp;</span><span class="p">)</span> <span class="o">=</span> <span class="k">delete</span><span class="p">;</span>
+<span class="lineno"> 89</span> 
+<span class="lineno"> 90</span>         <span class="n">RefCountDel</span><span class="o">&amp;</span> <span class="k">operator</span><span class="o">=</span><span class="p">(</span><span class="k">const</span> <span class="n">RefCountDel</span><span class="o">&amp;</span><span class="p">)</span> <span class="o">=</span> <span class="k">delete</span><span class="p">;</span>
+<span class="lineno"> 91</span> 
+<span class="lineno"> 92</span>         <span class="k">virtual</span> <span class="kt">void</span> <span class="nf">Destroy</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno"> 93</span>             <span class="n">del_</span><span class="p">(</span><span class="n">ptr_</span><span class="p">);</span>
+<span class="lineno"> 94</span>         <span class="p">}</span>
+<span class="lineno"> 95</span> 
+<span class="lineno"> 96</span>         <span class="k">virtual</span> <span class="kt">void</span> <span class="nf">DeleteThis</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno"> 97</span>             <span class="k">delete</span> <span class="k">this</span><span class="p">;</span>
+<span class="lineno"> 98</span>         <span class="p">}</span>
+<span class="lineno"> 99</span>     <span class="p">};</span>
+<span class="lineno">100</span> 
+<span class="lineno">101</span>     <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">T</span><span class="o">&gt;</span>
+<span class="lineno">102</span>     <span class="k">class</span> <span class="nc">RefCountObj</span><span class="o">:</span> <span class="k">public</span> <span class="n">RefCountBase</span> <span class="p">{</span>
+<span class="lineno">103</span>     <span class="k">private</span><span class="o">:</span>
+<span class="lineno">104</span>         <span class="k">typename</span> <span class="n">std</span><span class="o">::</span><span class="n">aligned_storage</span><span class="o">&lt;</span><span class="k">sizeof</span><span class="p">(</span><span class="n">T</span><span class="p">)</span><span class="o">&gt;::</span><span class="n">type</span> <span class="n">storage_</span><span class="p">;</span>
+<span class="lineno">105</span>     <span class="k">public</span><span class="o">:</span>
+<span class="lineno">106</span>         <span class="k">template</span><span class="o">&lt;</span><span class="n">class</span><span class="p">...</span> <span class="n">Types</span><span class="o">&gt;</span>
+<span class="lineno">107</span>         <span class="n">RefCountObj</span><span class="p">(</span><span class="n">Types</span><span class="p">...</span> <span class="n">args</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">108</span>             <span class="k">new</span> <span class="p">(</span><span class="o">&amp;</span><span class="n">storage_</span><span class="p">)</span><span class="n">T</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">forward</span><span class="o">&lt;</span><span class="n">Types</span><span class="o">&gt;</span><span class="p">(</span><span class="n">args</span><span class="p">)...);</span>
+<span class="lineno">109</span>         <span class="p">}</span>
+<span class="lineno">110</span> 
+<span class="lineno">111</span>         <span class="n">T</span><span class="o">*</span> <span class="n">Get</span><span class="p">()</span> <span class="k">const</span> <span class="p">{</span>
+<span class="lineno">112</span>             <span class="k">return</span> <span class="p">(</span><span class="n">T</span><span class="o">*</span><span class="p">)(</span><span class="o">&amp;</span><span class="n">storage_</span><span class="p">);</span>
+<span class="lineno">113</span>         <span class="p">}</span>
+<span class="lineno">114</span> 
+<span class="lineno">115</span>         <span class="k">virtual</span> <span class="kt">void</span> <span class="n">Destroy</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno">116</span>             <span class="n">Get</span><span class="p">()</span><span class="o">-&gt;~</span><span class="n">T</span><span class="p">();</span>
+<span class="lineno">117</span>         <span class="p">}</span>
+<span class="lineno">118</span> 
+<span class="lineno">119</span>         <span class="k">virtual</span> <span class="kt">void</span> <span class="n">DeleteThis</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno">120</span>             <span class="k">delete</span> <span class="k">this</span><span class="p">;</span>
+<span class="lineno">121</span>         <span class="p">}</span>
+<span class="lineno">122</span>     <span class="p">};</span>
+<span class="lineno">123</span> 
+<span class="lineno">124</span>     <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">T</span><span class="p">,</span> <span class="n">class</span><span class="p">...</span> <span class="n">Types</span><span class="o">&gt;</span>
+<span class="lineno">125</span>     <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span> <span class="n">make_shared</span><span class="p">(</span><span class="n">Types</span><span class="o">&amp;&amp;</span><span class="p">...</span> <span class="n">args</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">126</span>         <span class="n">RefCountObj</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;*</span> <span class="n">obj</span> <span class="o">=</span> <span class="k">new</span> <span class="n">RefCountObj</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">forward</span><span class="o">&lt;</span><span class="n">Types</span><span class="o">&gt;</span><span class="p">(</span><span class="n">args</span><span class="p">)...);</span>
+<span class="lineno">127</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span> <span class="n">p</span><span class="p">;</span>
+<span class="lineno">128</span>         <span class="n">p</span><span class="p">.</span><span class="n">reset_ref_0</span><span class="p">(</span><span class="n">obj</span><span class="o">-&gt;</span><span class="n">Get</span><span class="p">(),</span> <span class="n">obj</span><span class="p">);</span>
+<span class="lineno">129</span>         <span class="k">return</span> <span class="n">p</span><span class="p">;</span>
+<span class="lineno">130</span>     <span class="p">}</span>
+<span class="lineno">131</span> 
+<span class="lineno">132</span>     <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">T</span><span class="p">,</span> <span class="k">class</span> <span class="nc">U</span><span class="o">&gt;</span>
+<span class="lineno">133</span>     <span class="n">RefCountBase</span><span class="o">*</span> <span class="n">CreateRefCount</span><span class="p">(</span><span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;*</span> <span class="cm">/* for template parameter deduction */</span><span class="p">,</span> <span class="n">U</span><span class="o">*</span> <span class="n">p</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">134</span>         <span class="k">return</span> <span class="k">new</span> <span class="n">RefCount</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">(</span><span class="n">p</span><span class="p">);</span>
+<span class="lineno">135</span>     <span class="p">}</span>
+<span class="lineno">136</span> 
+<span class="lineno">137</span>     <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">T</span><span class="o">&gt;</span>
+<span class="lineno">138</span>     <span class="n">RefCountBase</span><span class="o">*</span> <span class="n">CreateRefCount</span><span class="p">(</span><span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="p">[]</span><span class="o">&gt;*</span> <span class="cm">/* for template parameter deduction */</span><span class="p">,</span> <span class="n">T</span><span class="o">*</span> <span class="n">p</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">139</span>         <span class="k">return</span> <span class="k">new</span> <span class="n">RefCountDel</span><span class="o">&lt;</span><span class="n">T</span><span class="p">,</span> <span class="n">std</span><span class="o">::</span><span class="n">default_delete</span><span class="o">&lt;</span><span class="n">T</span><span class="p">[]</span><span class="o">&gt;&gt;</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">std</span><span class="o">::</span><span class="n">default_delete</span><span class="o">&lt;</span><span class="n">T</span><span class="p">[]</span><span class="o">&gt;</span><span class="p">());</span>
+<span class="lineno">140</span>     <span class="p">}</span>
+<span class="lineno">141</span> 
+<span class="lineno">142</span>     <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">T</span><span class="o">&gt;</span>
+<span class="lineno">143</span>     <span class="k">struct</span> <span class="n">sp_element</span>
+<span class="lineno">144</span>     <span class="p">{</span>
+<span class="lineno">145</span>         <span class="k">typedef</span> <span class="n">T</span> <span class="n">type</span><span class="p">;</span>
+<span class="lineno">146</span>     <span class="p">};</span>
+<span class="lineno">147</span> 
+<span class="lineno">148</span>     <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">T</span><span class="o">&gt;</span>
+<span class="lineno">149</span>     <span class="k">struct</span> <span class="n">sp_element</span><span class="o">&lt;</span><span class="n">T</span><span class="p">[]</span><span class="o">&gt;</span>
+<span class="lineno">150</span>     <span class="p">{</span>
+<span class="lineno">151</span>         <span class="k">typedef</span> <span class="n">T</span> <span class="n">type</span><span class="p">;</span>
+<span class="lineno">152</span>     <span class="p">};</span>
+<span class="lineno">153</span> 
+<span class="lineno">154</span>     <span class="c1">// shared_ptr</span>
+<span class="lineno">155</span>     <span class="c1">// shared_ptr&lt;string&gt; p(new string(&quot;abc&quot;));</span>
+<span class="lineno">156</span>     <span class="c1">// shared_ptr&lt;string&gt; p2(p);</span>
+<span class="lineno">157</span>     <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">T</span><span class="o">&gt;</span>
+<span class="lineno">158</span>     <span class="k">class</span> <span class="nc">shared_ptr</span> <span class="p">{</span>
+<span class="lineno">159</span>     <span class="k">private</span><span class="o">:</span>
+<span class="lineno">160</span>         <span class="c1">// if we use T* here and T is array type like int[], we&#39;ll have trouble</span>
+<span class="lineno">161</span>         <span class="k">typedef</span> <span class="k">typename</span> <span class="n">sp_element</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;::</span><span class="n">type</span> <span class="n">element_type</span><span class="p">;</span>
+<span class="lineno">162</span>         <span class="n">RefCountBase</span><span class="o">*</span> <span class="n">pref_</span><span class="p">;</span>
+<span class="lineno">163</span>         <span class="n">element_type</span><span class="o">*</span> <span class="n">ptr_</span><span class="p">;</span>
+<span class="lineno">164</span>     <span class="k">public</span><span class="o">:</span>
+<span class="lineno">165</span>         <span class="n">shared_ptr</span><span class="p">()</span> <span class="o">:</span> <span class="n">pref_</span><span class="p">(</span><span class="k">nullptr</span><span class="p">),</span> <span class="n">ptr_</span><span class="p">(</span><span class="k">nullptr</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">166</span>         <span class="p">}</span>
+<span class="lineno">167</span> 
+<span class="lineno">168</span>         <span class="n">shared_ptr</span><span class="p">(</span><span class="n">element_type</span><span class="o">*</span> <span class="n">ptr</span><span class="p">)</span> <span class="o">:</span> <span class="n">ptr_</span><span class="p">(</span><span class="n">ptr</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">169</span>             <span class="n">pref_</span> <span class="o">=</span> <span class="n">CreateRefCount</span><span class="p">(</span><span class="k">this</span><span class="p">,</span> <span class="n">ptr</span><span class="p">);</span>
+<span class="lineno">170</span>         <span class="p">}</span>
+<span class="lineno">171</span> 
+<span class="lineno">172</span>         <span class="k">template</span><span class="o">&lt;</span><span class="k">class</span> <span class="nc">U</span><span class="o">&gt;</span> <span class="k">explicit</span> <span class="n">shared_ptr</span><span class="p">(</span><span class="n">U</span><span class="o">*</span> <span class="n">ptr</span><span class="p">)</span> <span class="o">:</span>
+<span class="lineno">173</span>             <span class="n">pref_</span><span class="p">(</span><span class="n">CreateRefCount</span><span class="p">(</span><span class="k">this</span><span class="p">,</span> <span class="n">ptr</span><span class="p">)),</span> <span class="n">ptr_</span><span class="p">(</span><span class="n">ptr</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">174</span>         <span class="p">}</span>
+<span class="lineno">175</span> 
+<span class="lineno">176</span>         <span class="k">template</span><span class="o">&lt;</span><span class="k">class</span> <span class="nc">U</span><span class="p">,</span> <span class="k">class</span> <span class="nc">D</span><span class="o">&gt;</span> <span class="n">shared_ptr</span><span class="p">(</span><span class="n">U</span><span class="o">*</span> <span class="n">ptr</span><span class="p">,</span> <span class="n">D</span> <span class="n">del</span><span class="p">)</span> <span class="o">:</span>
+<span class="lineno">177</span>             <span class="n">pref_</span><span class="p">(</span><span class="k">new</span> <span class="n">RefCountDel</span><span class="o">&lt;</span><span class="n">U</span><span class="p">,</span> <span class="n">D</span><span class="o">&gt;</span><span class="p">(</span><span class="n">ptr</span><span class="p">,</span> <span class="n">del</span><span class="p">)),</span> <span class="n">ptr_</span><span class="p">(</span><span class="n">ptr</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">178</span>         <span class="p">}</span>
+<span class="lineno">179</span> 
+<span class="lineno">180</span>         <span class="n">shared_ptr</span><span class="p">(</span><span class="kt">nullptr_t</span><span class="p">)</span> <span class="o">:</span><span class="n">pref_</span><span class="p">(</span><span class="k">nullptr</span><span class="p">),</span> <span class="n">ptr_</span><span class="p">(</span><span class="k">nullptr</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">181</span>         <span class="p">}</span>
+<span class="lineno">182</span> 
+<span class="lineno">183</span>         <span class="k">template</span><span class="o">&lt;</span><span class="k">class</span> <span class="nc">D</span><span class="o">&gt;</span> <span class="n">shared_ptr</span><span class="p">(</span><span class="kt">nullptr_t</span><span class="p">,</span> <span class="n">D</span> <span class="n">del</span><span class="p">)</span> <span class="o">:</span> 
+<span class="lineno">184</span>             <span class="n">pref_</span><span class="p">(</span><span class="k">new</span> <span class="n">RefCountDel</span><span class="o">&lt;</span><span class="n">T</span><span class="p">,</span> <span class="n">D</span><span class="o">&gt;</span><span class="p">(</span><span class="k">nullptr</span><span class="p">,</span> <span class="n">del</span><span class="p">)),</span> <span class="n">ptr_</span><span class="p">(</span><span class="k">nullptr</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">185</span>         <span class="p">}</span>
+<span class="lineno">186</span> 
+<span class="lineno">187</span>         <span class="k">template</span><span class="o">&lt;</span><span class="k">class</span> <span class="nc">U</span><span class="o">&gt;</span> <span class="n">shared_ptr</span><span class="p">(</span><span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">U</span><span class="o">&gt;&amp;</span> <span class="n">u</span><span class="p">,</span> <span class="n">T</span><span class="o">*</span> <span class="n">ptr</span><span class="p">)</span><span class="o">:</span>
+<span class="lineno">188</span>             <span class="n">pref_</span><span class="p">(</span><span class="k">nullptr</span><span class="p">),</span> <span class="n">ptr_</span><span class="p">(</span><span class="k">nullptr</span><span class="p">){</span>
+<span class="lineno">189</span>             <span class="n">reset_ref</span><span class="p">(</span><span class="n">ptr</span><span class="p">,</span> <span class="n">u</span><span class="p">.</span><span class="n">pref_</span><span class="p">);</span>
+<span class="lineno">190</span>         <span class="p">}</span>
+<span class="lineno">191</span>         
+<span class="lineno">192</span>         <span class="n">shared_ptr</span><span class="p">(</span><span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&amp;</span> <span class="n">rhs</span><span class="p">)</span><span class="o">:</span>
+<span class="lineno">193</span>             <span class="n">pref_</span><span class="p">(</span><span class="k">nullptr</span><span class="p">),</span> <span class="n">ptr_</span><span class="p">(</span><span class="k">nullptr</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">194</span>             <span class="n">reset_ref</span><span class="p">(</span><span class="n">rhs</span><span class="p">.</span><span class="n">ptr_</span><span class="p">,</span> <span class="n">rhs</span><span class="p">.</span><span class="n">pref_</span><span class="p">);</span>
+<span class="lineno">195</span>         <span class="p">}</span>
+<span class="lineno">196</span> 
+<span class="lineno">197</span>         <span class="k">template</span><span class="o">&lt;</span><span class="k">class</span> <span class="nc">U</span><span class="o">&gt;</span> <span class="n">shared_ptr</span><span class="p">(</span><span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">U</span><span class="o">&gt;&amp;</span> <span class="n">rhs</span><span class="p">)</span><span class="o">:</span> 
+<span class="lineno">198</span>             <span class="n">ptr_</span><span class="p">(</span><span class="k">nullptr</span><span class="p">),</span> <span class="n">pref_</span><span class="p">(</span><span class="k">nullptr</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">199</span>             <span class="n">reset_ref</span><span class="p">(</span><span class="n">rhs</span><span class="p">.</span><span class="n">ptr_</span><span class="p">,</span> <span class="n">rhs</span><span class="p">.</span><span class="n">pref_</span><span class="p">);</span>
+<span class="lineno">200</span>         <span class="p">}</span>
+<span class="lineno">201</span> 
+<span class="lineno">202</span>         <span class="c1">// move ctor</span>
+<span class="lineno">203</span>         <span class="n">shared_ptr</span><span class="p">(</span><span class="n">shared_ptr</span><span class="o">&amp;&amp;</span> <span class="n">rhs</span><span class="p">)</span><span class="o">:</span> 
+<span class="lineno">204</span>             <span class="n">pref_</span><span class="p">(</span><span class="n">rhs</span><span class="p">.</span><span class="n">pref_</span><span class="p">),</span> <span class="n">ptr_</span><span class="p">(</span><span class="n">rhs</span><span class="p">.</span><span class="n">ptr_</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">205</span>             <span class="n">rhs</span><span class="p">.</span><span class="n">pref_</span> <span class="o">=</span> <span class="k">nullptr</span><span class="p">;</span>
+<span class="lineno">206</span>             <span class="n">rhs</span><span class="p">.</span><span class="n">ptr_</span> <span class="o">=</span> <span class="k">nullptr</span><span class="p">;</span>
+<span class="lineno">207</span>         <span class="p">}</span>
+<span class="lineno">208</span>         <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">U</span><span class="o">&gt;</span> <span class="n">shared_ptr</span><span class="p">(</span><span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">U</span><span class="o">&gt;&amp;&amp;</span> <span class="n">rhs</span><span class="p">)</span> <span class="o">:</span> <span class="n">pref_</span><span class="p">(</span><span class="n">rhs</span><span class="p">.</span><span class="n">pref_</span><span class="p">),</span> <span class="n">ptr_</span><span class="p">(</span><span class="n">rhs</span><span class="p">.</span><span class="n">ptr_</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">209</span>             <span class="n">rhs</span><span class="p">.</span><span class="n">pref_</span> <span class="o">=</span> <span class="k">nullptr</span><span class="p">;</span>
+<span class="lineno">210</span>             <span class="n">rhs</span><span class="p">.</span><span class="n">ptr_</span> <span class="o">=</span> <span class="k">nullptr</span><span class="p">;</span>
+<span class="lineno">211</span>         <span class="p">}</span>
+<span class="lineno">212</span>         
+<span class="lineno">213</span>         <span class="n">shared_ptr</span><span class="o">&amp;</span> <span class="k">operator</span><span class="o">=</span><span class="p">(</span><span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&amp;</span> <span class="n">rhs</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">214</span>             <span class="n">reset_ref</span><span class="p">(</span><span class="n">rhs</span><span class="p">.</span><span class="n">ptr_</span><span class="p">,</span> <span class="n">rhs</span><span class="p">.</span><span class="n">pref_</span><span class="p">);</span>
+<span class="lineno">215</span>             <span class="k">return</span> <span class="o">*</span><span class="k">this</span><span class="p">;</span>
+<span class="lineno">216</span>         <span class="p">}</span>
+<span class="lineno">217</span> 
+<span class="lineno">218</span>         <span class="n">shared_ptr</span><span class="o">&amp;</span> <span class="k">operator</span><span class="o">=</span><span class="p">(</span><span class="n">shared_ptr</span><span class="o">&amp;&amp;</span> <span class="n">rhs</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">219</span>             <span class="n">reset_ref</span><span class="p">(</span><span class="n">rhs</span><span class="p">.</span><span class="n">ptr_</span><span class="p">,</span> <span class="n">rhs</span><span class="p">.</span><span class="n">pref_</span><span class="p">);</span>
+<span class="lineno">220</span>             <span class="k">return</span> <span class="o">*</span><span class="k">this</span><span class="p">;</span>
+<span class="lineno">221</span>         <span class="p">}</span>
+<span class="lineno">222</span> 
+<span class="lineno">223</span>         <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">U</span><span class="o">&gt;</span>
+<span class="lineno">224</span>         <span class="n">shared_ptr</span><span class="o">&amp;</span> <span class="k">operator</span><span class="o">=</span><span class="p">(</span><span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">U</span><span class="o">&gt;&amp;&amp;</span> <span class="n">rhs</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">225</span>             <span class="n">reset_ref</span><span class="p">(</span><span class="n">rhs</span><span class="p">.</span><span class="n">ptr_</span><span class="p">,</span> <span class="n">rhs</span><span class="p">.</span><span class="n">pref_</span><span class="p">);</span>
+<span class="lineno">226</span>             <span class="k">return</span> <span class="o">*</span><span class="k">this</span><span class="p">;</span>
+<span class="lineno">227</span>         <span class="p">}</span>
+<span class="lineno">228</span> 
+<span class="lineno">229</span>         <span class="o">~</span><span class="n">shared_ptr</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno">230</span>             <span class="n">Decref</span><span class="p">();</span>
+<span class="lineno">231</span>         <span class="p">}</span>
+<span class="lineno">232</span>         <span class="kt">void</span> <span class="n">reset</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno">233</span>             <span class="n">reset_ref</span><span class="p">(</span><span class="k">nullptr</span><span class="p">,</span> <span class="k">nullptr</span><span class="p">);</span>
+<span class="lineno">234</span>         <span class="p">}</span>
+<span class="lineno">235</span> 
+<span class="lineno">236</span>         <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">U</span><span class="o">&gt;</span>
+<span class="lineno">237</span>         <span class="kt">void</span> <span class="n">reset</span><span class="p">(</span><span class="n">U</span><span class="o">*</span> <span class="n">ptr</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">238</span>             <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">(</span><span class="n">ptr</span><span class="p">).</span><span class="n">swap</span><span class="p">(</span><span class="o">*</span><span class="k">this</span><span class="p">);</span>
+<span class="lineno">239</span>         <span class="p">}</span>
+<span class="lineno">240</span> 
+<span class="lineno">241</span>         <span class="k">template</span><span class="o">&lt;</span> <span class="k">class</span> <span class="nc">U</span><span class="p">,</span> <span class="k">class</span> <span class="nc">D</span><span class="o">&gt;</span>
+<span class="lineno">242</span>         <span class="kt">void</span> <span class="n">reset</span><span class="p">(</span><span class="n">U</span><span class="o">*</span> <span class="n">ptr</span><span class="p">,</span> <span class="n">D</span> <span class="n">del</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">243</span>             <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;</span><span class="p">(</span><span class="n">ptr</span><span class="p">,</span> <span class="n">del</span><span class="p">).</span><span class="n">swap</span><span class="p">(</span><span class="o">*</span><span class="k">this</span><span class="p">);</span>
+<span class="lineno">244</span>         <span class="p">}</span>
+<span class="lineno">245</span> 
+<span class="lineno">246</span>         <span class="n">T</span><span class="o">&amp;</span> <span class="k">operator</span><span class="o">*</span><span class="p">()</span> <span class="k">const</span> <span class="p">{</span>
+<span class="lineno">247</span>             <span class="k">return</span> <span class="o">*</span><span class="p">(</span><span class="n">get</span><span class="p">());</span>
+<span class="lineno">248</span>         <span class="p">}</span>
+<span class="lineno">249</span>         <span class="n">T</span><span class="o">*</span> <span class="n">get</span><span class="p">()</span> <span class="k">const</span> <span class="p">{</span>
+<span class="lineno">250</span>             <span class="k">return</span> <span class="n">ptr_</span><span class="p">;</span>
+<span class="lineno">251</span>         <span class="p">}</span>
+<span class="lineno">252</span>         <span class="n">T</span><span class="o">*</span> <span class="k">operator</span><span class="o">-&gt;</span><span class="p">()</span> <span class="k">const</span> <span class="p">{</span>
+<span class="lineno">253</span>             <span class="k">return</span> <span class="n">get</span><span class="p">();</span>
+<span class="lineno">254</span>         <span class="p">}</span>
+<span class="lineno">255</span> 
+<span class="lineno">256</span>         <span class="kt">void</span> <span class="n">swap</span><span class="p">(</span><span class="n">shared_ptr</span><span class="o">&amp;</span> <span class="n">x</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">257</span>             <span class="n">std</span><span class="o">::</span><span class="n">swap</span><span class="p">(</span><span class="n">ptr_</span><span class="p">,</span> <span class="n">x</span><span class="p">.</span><span class="n">ptr_</span><span class="p">);</span>
+<span class="lineno">258</span>             <span class="n">std</span><span class="o">::</span><span class="n">swap</span><span class="p">(</span><span class="n">pref_</span><span class="p">,</span> <span class="n">x</span><span class="p">.</span><span class="n">pref_</span><span class="p">);</span>
+<span class="lineno">259</span>         <span class="p">}</span>
+<span class="lineno">260</span>         <span class="kt">long</span> <span class="n">use_count</span><span class="p">()</span> <span class="k">const</span> <span class="p">{</span>
+<span class="lineno">261</span>             <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">pref_</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">262</span>                 <span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+<span class="lineno">263</span>             <span class="p">}</span>
+<span class="lineno">264</span>             <span class="k">return</span> <span class="n">pref_</span><span class="o">-&gt;</span><span class="n">UseCount</span><span class="p">();</span>
+<span class="lineno">265</span>         <span class="p">}</span>
+<span class="lineno">266</span>         <span class="kt">bool</span> <span class="n">unique</span><span class="p">()</span> <span class="k">const</span> <span class="p">{</span>
+<span class="lineno">267</span>             <span class="k">return</span> <span class="n">use_count</span><span class="p">()</span> <span class="o">==</span> <span class="mi">1</span><span class="p">;</span>
+<span class="lineno">268</span>         <span class="p">}</span>
+<span class="lineno">269</span>         <span class="k">explicit</span> <span class="k">operator</span> <span class="kt">bool</span><span class="p">()</span> <span class="k">const</span> <span class="p">{</span>
+<span class="lineno">270</span>             <span class="k">return</span> <span class="n">get</span><span class="p">()</span> <span class="o">!=</span> <span class="k">nullptr</span><span class="p">;</span>
+<span class="lineno">271</span>         <span class="p">}</span>
+<span class="lineno">272</span>         <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">U</span><span class="o">&gt;</span> <span class="kt">bool</span> <span class="n">owner_before</span><span class="p">(</span><span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">U</span><span class="o">&gt;&amp;</span> <span class="n">rhs</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">273</span>             <span class="k">return</span> <span class="n">pref_</span> <span class="o">&lt;</span> <span class="n">rhs</span><span class="p">.</span><span class="n">pref_</span><span class="p">;</span>
+<span class="lineno">274</span>         <span class="p">}</span>
+<span class="lineno">275</span>     <span class="k">private</span><span class="o">:</span>
+<span class="lineno">276</span>         <span class="c1">// reset without incref</span>
+<span class="lineno">277</span>         <span class="kt">void</span> <span class="n">reset_ref_0</span><span class="p">(</span><span class="n">element_type</span><span class="o">*</span> <span class="n">ptr</span><span class="p">,</span> <span class="n">RefCountBase</span><span class="o">*</span> <span class="n">refCount</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">278</span>             <span class="k">if</span> <span class="p">(</span><span class="n">pref_</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">279</span>                 <span class="n">pref_</span><span class="o">-&gt;</span><span class="n">Decref</span><span class="p">();</span>
+<span class="lineno">280</span>             <span class="p">}</span>
+<span class="lineno">281</span>             <span class="n">ptr_</span> <span class="o">=</span> <span class="n">ptr</span><span class="p">;</span>
+<span class="lineno">282</span>             <span class="n">pref_</span> <span class="o">=</span> <span class="n">refCount</span><span class="p">;</span>
+<span class="lineno">283</span> 
+<span class="lineno">284</span>         <span class="p">}</span>
+<span class="lineno">285</span>         <span class="kt">void</span> <span class="n">reset_ref</span><span class="p">(</span><span class="n">element_type</span><span class="o">*</span> <span class="n">ptr</span><span class="p">,</span> <span class="n">RefCountBase</span><span class="o">*</span> <span class="n">refCount</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">286</span>             <span class="k">if</span> <span class="p">(</span><span class="n">refCount</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">287</span>                 <span class="n">refCount</span><span class="o">-&gt;</span><span class="n">Incref</span><span class="p">();</span>
+<span class="lineno">288</span>             <span class="p">}</span>
+<span class="lineno">289</span>             <span class="n">reset_ref_0</span><span class="p">(</span><span class="n">ptr</span><span class="p">,</span> <span class="n">refCount</span><span class="p">);</span>
+<span class="lineno">290</span>         <span class="p">}</span>
+<span class="lineno">291</span>         
+<span class="lineno">292</span> 
+<span class="lineno">293</span>         <span class="kt">void</span> <span class="n">Decref</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno">294</span>             <span class="k">if</span> <span class="p">(</span><span class="n">pref_</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">295</span>                 <span class="n">pref_</span><span class="o">-&gt;</span><span class="n">Decref</span><span class="p">();</span>
+<span class="lineno">296</span>                 <span class="n">pref_</span> <span class="o">=</span> <span class="k">nullptr</span><span class="p">;</span>
+<span class="lineno">297</span>             <span class="p">}</span>
+<span class="lineno">298</span>         <span class="p">}</span>
+<span class="lineno">299</span> 
+<span class="lineno">300</span>         <span class="c1">// friends</span>
+<span class="lineno">301</span>         <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">U</span><span class="o">&gt;</span> <span class="k">friend</span> <span class="k">class</span> <span class="nc">shared_ptr</span><span class="p">;</span>
+<span class="lineno">302</span>         <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">U</span><span class="p">,</span> <span class="n">class</span><span class="p">...</span> <span class="n">Types</span><span class="o">&gt;</span> <span class="k">friend</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">U</span><span class="o">&gt;</span> <span class="n">make_shared</span><span class="p">(</span><span class="n">Types</span><span class="o">&amp;&amp;</span><span class="p">...</span> <span class="n">args</span><span class="p">);</span>
+<span class="lineno">303</span>     <span class="p">};</span>
+<span class="lineno">304</span> 
+<span class="lineno">305</span>     <span class="k">template</span> <span class="o">&lt;</span><span class="k">class</span> <span class="nc">T</span><span class="o">&gt;</span>
+<span class="lineno">306</span>     <span class="kt">void</span> <span class="n">swap</span><span class="p">(</span><span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;&amp;</span> <span class="n">lhs</span><span class="p">,</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;&amp;</span> <span class="n">rhs</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">307</span>         <span class="n">lhs</span><span class="p">.</span><span class="n">swap</span><span class="p">(</span><span class="n">rhs</span><span class="p">);</span>
+<span class="lineno">308</span>     <span class="p">}</span>
+<span class="lineno">309</span> 
+<span class="lineno">310</span>     <span class="k">template</span> <span class="o">&lt;</span> <span class="k">class</span> <span class="nc">T</span><span class="p">,</span> <span class="k">class</span> <span class="nc">U</span> <span class="o">&gt;</span> 
+<span class="lineno">311</span>     <span class="kt">bool</span> <span class="k">operator</span><span class="o">==</span><span class="p">(</span><span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;&amp;</span> <span class="n">lhs</span><span class="p">,</span> <span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">U</span><span class="o">&gt;&amp;</span> <span class="n">rhs</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">312</span>         <span class="k">return</span> <span class="n">lhs</span><span class="p">.</span><span class="n">get</span><span class="p">()</span> <span class="o">==</span> <span class="n">rhs</span><span class="p">.</span><span class="n">get</span><span class="p">();</span>
+<span class="lineno">313</span>     <span class="p">}</span>
+<span class="lineno">314</span> 
+<span class="lineno">315</span>     <span class="k">template</span><span class="o">&lt;</span> <span class="k">class</span> <span class="nc">T</span><span class="p">,</span> <span class="k">class</span> <span class="nc">U</span> <span class="o">&gt;</span> 
+<span class="lineno">316</span>     <span class="kt">bool</span> <span class="k">operator</span><span class="o">!=</span><span class="p">(</span><span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;&amp;</span> <span class="n">lhs</span><span class="p">,</span> <span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">U</span><span class="o">&gt;&amp;</span> <span class="n">rhs</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">317</span>         <span class="k">return</span> <span class="n">lhs</span><span class="p">.</span><span class="n">get</span><span class="p">()</span> <span class="o">!=</span> <span class="n">rhs</span><span class="p">.</span><span class="n">get</span><span class="p">();</span>
+<span class="lineno">318</span>     <span class="p">}</span>
+<span class="lineno">319</span> 
+<span class="lineno">320</span>     <span class="k">template</span><span class="o">&lt;</span> <span class="k">class</span> <span class="nc">T</span><span class="p">,</span> <span class="k">class</span> <span class="nc">U</span> <span class="o">&gt;</span> 
+<span class="lineno">321</span>     <span class="kt">bool</span> <span class="k">operator</span><span class="o">&lt;</span><span class="p">(</span><span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;&amp;</span> <span class="n">lhs</span><span class="p">,</span> <span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">U</span><span class="o">&gt;&amp;</span> <span class="n">rhs</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">322</span>         <span class="k">return</span> <span class="n">lhs</span><span class="p">.</span><span class="n">get</span><span class="p">()</span> <span class="o">&lt;</span> <span class="n">rhs</span><span class="p">.</span><span class="n">get</span><span class="p">();</span>
+<span class="lineno">323</span>     <span class="p">}</span>
+<span class="lineno">324</span>     <span class="k">template</span><span class="o">&lt;</span> <span class="k">class</span> <span class="nc">T</span><span class="p">,</span> <span class="k">class</span> <span class="nc">U</span> <span class="o">&gt;</span> 
+<span class="lineno">325</span>     <span class="kt">bool</span> <span class="k">operator</span><span class="o">&gt;</span><span class="p">(</span><span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;&amp;</span> <span class="n">lhs</span><span class="p">,</span> <span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">U</span><span class="o">&gt;&amp;</span> <span class="n">rhs</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">326</span>         <span class="k">return</span> <span class="n">lhs</span><span class="p">.</span><span class="n">get</span><span class="p">()</span> <span class="o">&gt;</span> <span class="n">rhs</span><span class="p">.</span><span class="n">get</span><span class="p">();</span>
+<span class="lineno">327</span>     <span class="p">}</span>
+<span class="lineno">328</span>     <span class="k">template</span><span class="o">&lt;</span> <span class="k">class</span> <span class="nc">T</span><span class="p">,</span> <span class="k">class</span> <span class="nc">U</span> <span class="o">&gt;</span> 
+<span class="lineno">329</span>     <span class="kt">bool</span> <span class="k">operator</span><span class="o">&lt;=</span><span class="p">(</span><span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;&amp;</span> <span class="n">lhs</span><span class="p">,</span> <span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">U</span><span class="o">&gt;&amp;</span> <span class="n">rhs</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">330</span>         <span class="k">return</span> <span class="n">lhs</span><span class="p">.</span><span class="n">get</span><span class="p">()</span> <span class="o">&lt;=</span> <span class="n">rhs</span><span class="p">.</span><span class="n">get</span><span class="p">();</span>
+<span class="lineno">331</span>     <span class="p">}</span>
+<span class="lineno">332</span> 
+<span class="lineno">333</span>     <span class="k">template</span><span class="o">&lt;</span> <span class="k">class</span> <span class="nc">T</span><span class="p">,</span> <span class="k">class</span> <span class="nc">U</span> <span class="o">&gt;</span> 
+<span class="lineno">334</span>     <span class="kt">bool</span> <span class="k">operator</span><span class="o">&gt;=</span><span class="p">(</span><span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;&amp;</span> <span class="n">lhs</span><span class="p">,</span> <span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">U</span><span class="o">&gt;&amp;</span> <span class="n">rhs</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">335</span>         <span class="k">return</span> <span class="n">lhs</span><span class="p">.</span><span class="n">get</span><span class="p">()</span> <span class="o">&gt;=</span> <span class="n">rhs</span><span class="p">.</span><span class="n">get</span><span class="p">();</span>
+<span class="lineno">336</span>     <span class="p">}</span>
+<span class="lineno">337</span> 
+<span class="lineno">338</span>     <span class="k">template</span><span class="o">&lt;</span> <span class="k">class</span> <span class="nc">T</span> <span class="o">&gt;</span> 
+<span class="lineno">339</span>     <span class="kt">bool</span> <span class="k">operator</span><span class="o">==</span><span class="p">(</span><span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;&amp;</span> <span class="n">lhs</span><span class="p">,</span> <span class="n">std</span><span class="o">::</span><span class="kt">nullptr_t</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">340</span>         <span class="k">return</span> <span class="n">lhs</span><span class="p">.</span><span class="n">get</span><span class="p">()</span> <span class="o">==</span> <span class="k">nullptr</span><span class="p">;</span>
+<span class="lineno">341</span>     <span class="p">}</span>
+<span class="lineno">342</span> 
+<span class="lineno">343</span>     <span class="k">template</span><span class="o">&lt;</span> <span class="k">class</span> <span class="nc">T</span> <span class="o">&gt;</span>
+<span class="lineno">344</span>     <span class="kt">bool</span> <span class="k">operator</span><span class="o">==</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="kt">nullptr_t</span><span class="p">,</span> <span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;&amp;</span> <span class="n">rhs</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">345</span>         <span class="k">return</span> <span class="k">nullptr</span> <span class="o">==</span> <span class="n">rhs</span><span class="p">.</span><span class="n">get</span><span class="p">();</span>
+<span class="lineno">346</span>     <span class="p">}</span>
+<span class="lineno">347</span> 
+<span class="lineno">348</span>     <span class="k">template</span><span class="o">&lt;</span> <span class="k">class</span> <span class="nc">T</span> <span class="o">&gt;</span>
+<span class="lineno">349</span>     <span class="kt">bool</span> <span class="k">operator</span><span class="o">!=</span><span class="p">(</span><span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;&amp;</span> <span class="n">lhs</span><span class="p">,</span> <span class="n">std</span><span class="o">::</span><span class="kt">nullptr_t</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">350</span>         <span class="k">return</span> <span class="n">lhs</span><span class="p">.</span><span class="n">get</span><span class="p">()</span> <span class="o">!=</span> <span class="k">nullptr</span><span class="p">;</span>
+<span class="lineno">351</span>     <span class="p">}</span>
+<span class="lineno">352</span> 
+<span class="lineno">353</span>     <span class="k">template</span><span class="o">&lt;</span> <span class="k">class</span> <span class="nc">T</span> <span class="o">&gt;</span>
+<span class="lineno">354</span>     <span class="kt">bool</span> <span class="k">operator</span><span class="o">!=</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="kt">nullptr_t</span><span class="p">,</span> <span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;&amp;</span> <span class="n">rhs</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">355</span>         <span class="k">return</span> <span class="k">nullptr</span> <span class="o">!=</span> <span class="n">rhs</span><span class="p">.</span><span class="n">get</span><span class="p">();</span>
+<span class="lineno">356</span>     <span class="p">}</span>
+<span class="lineno">357</span> 
+<span class="lineno">358</span>     <span class="k">template</span><span class="o">&lt;</span> <span class="k">class</span> <span class="nc">T</span> <span class="o">&gt;</span>
+<span class="lineno">359</span>     <span class="kt">bool</span> <span class="k">operator</span><span class="o">&lt;</span><span class="p">(</span><span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;&amp;</span> <span class="n">lhs</span><span class="p">,</span> <span class="n">std</span><span class="o">::</span><span class="kt">nullptr_t</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">360</span>         <span class="k">return</span> <span class="n">lhs</span><span class="p">.</span><span class="n">get</span><span class="p">()</span> <span class="o">&lt;</span> <span class="k">nullptr</span><span class="p">;</span>
+<span class="lineno">361</span>     <span class="p">}</span>
+<span class="lineno">362</span> 
+<span class="lineno">363</span>     <span class="k">template</span><span class="o">&lt;</span> <span class="k">class</span> <span class="nc">T</span> <span class="o">&gt;</span>
+<span class="lineno">364</span>     <span class="kt">bool</span> <span class="k">operator</span><span class="o">&lt;</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="kt">nullptr_t</span><span class="p">,</span> <span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;&amp;</span> <span class="n">rhs</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">365</span>         <span class="k">return</span> <span class="k">nullptr</span> <span class="o">&lt;</span> <span class="n">rhs</span><span class="p">.</span><span class="n">get</span><span class="p">();</span>
+<span class="lineno">366</span>     <span class="p">}</span>
+<span class="lineno">367</span> 
+<span class="lineno">368</span>     <span class="k">template</span><span class="o">&lt;</span> <span class="k">class</span> <span class="nc">T</span> <span class="o">&gt;</span>
+<span class="lineno">369</span>     <span class="kt">bool</span> <span class="k">operator</span><span class="o">&lt;=</span><span class="p">(</span><span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;&amp;</span> <span class="n">lhs</span><span class="p">,</span> <span class="n">std</span><span class="o">::</span><span class="kt">nullptr_t</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">370</span>         <span class="k">return</span> <span class="n">lhs</span><span class="p">.</span><span class="n">get</span><span class="p">()</span> <span class="o">&lt;=</span> <span class="k">nullptr</span><span class="p">;</span>
+<span class="lineno">371</span>     <span class="p">}</span>
+<span class="lineno">372</span> 
+<span class="lineno">373</span>     <span class="k">template</span><span class="o">&lt;</span> <span class="k">class</span> <span class="nc">T</span> <span class="o">&gt;</span>
+<span class="lineno">374</span>     <span class="kt">bool</span> <span class="k">operator</span><span class="o">&lt;=</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="kt">nullptr_t</span><span class="p">,</span> <span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;&amp;</span> <span class="n">rhs</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">375</span>         <span class="k">return</span> <span class="k">nullptr</span> <span class="o">&lt;=</span> <span class="n">rhs</span><span class="p">.</span><span class="n">get</span><span class="p">();</span>
+<span class="lineno">376</span>     <span class="p">}</span>
+<span class="lineno">377</span> 
+<span class="lineno">378</span>     <span class="k">template</span><span class="o">&lt;</span> <span class="k">class</span> <span class="nc">T</span> <span class="o">&gt;</span>
+<span class="lineno">379</span>     <span class="kt">bool</span> <span class="k">operator</span><span class="o">&gt;</span><span class="p">(</span><span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;&amp;</span> <span class="n">lhs</span><span class="p">,</span> <span class="n">std</span><span class="o">::</span><span class="kt">nullptr_t</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">380</span>         <span class="k">return</span> <span class="n">lhs</span><span class="p">.</span><span class="n">get</span><span class="p">()</span> <span class="o">&gt;</span> <span class="k">nullptr</span><span class="p">;</span>
+<span class="lineno">381</span>     <span class="p">}</span>
+<span class="lineno">382</span> 
+<span class="lineno">383</span>     <span class="k">template</span><span class="o">&lt;</span> <span class="k">class</span> <span class="nc">T</span> <span class="o">&gt;</span>
+<span class="lineno">384</span>     <span class="kt">bool</span> <span class="k">operator</span><span class="o">&gt;</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="kt">nullptr_t</span><span class="p">,</span> <span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;&amp;</span> <span class="n">rhs</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">385</span>         <span class="k">return</span> <span class="k">nullptr</span> <span class="o">&gt;</span> <span class="n">rhs</span><span class="p">.</span><span class="n">get</span><span class="p">();</span>
+<span class="lineno">386</span>     <span class="p">}</span>
+<span class="lineno">387</span> 
+<span class="lineno">388</span>     <span class="k">template</span><span class="o">&lt;</span> <span class="k">class</span> <span class="nc">T</span> <span class="o">&gt;</span>
+<span class="lineno">389</span>     <span class="kt">bool</span> <span class="k">operator</span><span class="o">&gt;=</span><span class="p">(</span><span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;&amp;</span> <span class="n">lhs</span><span class="p">,</span> <span class="n">std</span><span class="o">::</span><span class="kt">nullptr_t</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">390</span>         <span class="k">return</span> <span class="n">lhs</span><span class="p">.</span><span class="n">get</span><span class="p">()</span> <span class="o">&gt;=</span> <span class="k">nullptr</span><span class="p">;</span>
+<span class="lineno">391</span>     <span class="p">}</span>
+<span class="lineno">392</span> 
+<span class="lineno">393</span>     <span class="k">template</span><span class="o">&lt;</span> <span class="k">class</span> <span class="nc">T</span> <span class="o">&gt;</span>
+<span class="lineno">394</span>     <span class="kt">bool</span> <span class="k">operator</span><span class="o">&gt;=</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="kt">nullptr_t</span><span class="p">,</span> <span class="k">const</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">T</span><span class="o">&gt;&amp;</span> <span class="n">rhs</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">395</span>         <span class="k">return</span> <span class="k">nullptr</span> <span class="o">&gt;=</span> <span class="n">rhs</span><span class="p">.</span><span class="n">get</span><span class="p">();</span>
+<span class="lineno">396</span>     <span class="p">}</span>
+<span class="lineno">397</span> <span class="p">}</span></code></pre></div>
+
+<p>Here’s the test code.</p>
+
+<div class="highlight"><pre><code class="language-c--" data-lang="c++"><span class="lineno">  1</span> <span class="cp">#include &quot;stdafx.h&quot;</span>
+<span class="lineno">  2</span> <span class="cp">#include &quot;smartptr.h&quot;</span>
+<span class="lineno">  3</span> 
+<span class="lineno">  4</span> <span class="k">namespace</span> <span class="p">{</span>
+<span class="lineno">  5</span>     <span class="k">using</span> <span class="k">namespace</span> <span class="n">mp</span><span class="p">;</span>
+<span class="lineno">  6</span>     <span class="k">class</span> <span class="nc">B</span> <span class="p">{</span>
+<span class="lineno">  7</span>     <span class="k">public</span><span class="o">:</span>
+<span class="lineno">  8</span>         <span class="kt">int</span> <span class="n">value_</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+<span class="lineno">  9</span>         <span class="kt">int</span> <span class="nf">Inc</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno"> 10</span>             <span class="k">return</span> <span class="o">++</span><span class="n">value_</span><span class="p">;</span>
+<span class="lineno"> 11</span>         <span class="p">}</span>
+<span class="lineno"> 12</span>     <span class="p">};</span>
+<span class="lineno"> 13</span> 
+<span class="lineno"> 14</span>     <span class="k">class</span> <span class="nc">A</span>
+<span class="lineno"> 15</span>     <span class="p">{</span>
+<span class="lineno"> 16</span>     <span class="k">public</span><span class="o">:</span>
+<span class="lineno"> 17</span>         <span class="k">static</span> <span class="n">std</span><span class="o">::</span><span class="n">string</span> <span class="n">ctor_dtor_recorder_</span><span class="p">;</span>
+<span class="lineno"> 18</span>         <span class="kt">void</span> <span class="nf">ClearCtorDtorRecorder</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno"> 19</span>             <span class="n">A</span><span class="o">::</span><span class="n">ctor_dtor_recorder_</span><span class="p">.</span><span class="n">clear</span><span class="p">();</span>
+<span class="lineno"> 20</span>         <span class="p">}</span>
+<span class="lineno"> 21</span>         <span class="kt">int</span> <span class="n">value_</span><span class="p">;</span>
+<span class="lineno"> 22</span>         <span class="n">B</span> <span class="n">b_</span><span class="p">;</span>
+<span class="lineno"> 23</span>         <span class="n">A</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno"> 24</span>             <span class="n">value_</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+<span class="lineno"> 25</span>             <span class="n">ctor_dtor_recorder_</span><span class="p">.</span><span class="n">push_back</span><span class="p">(</span><span class="sc">&#39;C&#39;</span><span class="p">);</span>
+<span class="lineno"> 26</span>         <span class="p">}</span>
+<span class="lineno"> 27</span>         
+<span class="lineno"> 28</span>         <span class="n">A</span><span class="p">(</span><span class="kt">int</span> <span class="n">val</span><span class="p">)</span> <span class="o">:</span> <span class="n">value_</span><span class="p">(</span><span class="n">val</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 29</span>             <span class="n">ctor_dtor_recorder_</span><span class="p">.</span><span class="n">push_back</span><span class="p">(</span><span class="sc">&#39;C&#39;</span><span class="p">);</span>
+<span class="lineno"> 30</span>         <span class="p">}</span>
+<span class="lineno"> 31</span> 
+<span class="lineno"> 32</span>         <span class="kt">int</span> <span class="n">Inc</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno"> 33</span>             <span class="k">return</span> <span class="o">++</span><span class="n">value_</span><span class="p">;</span>
+<span class="lineno"> 34</span>         <span class="p">}</span>
+<span class="lineno"> 35</span>         <span class="o">~</span><span class="n">A</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno"> 36</span>             <span class="n">ctor_dtor_recorder_</span><span class="p">.</span><span class="n">push_back</span><span class="p">(</span><span class="sc">&#39;D&#39;</span><span class="p">);</span>
+<span class="lineno"> 37</span>         <span class="p">}</span>
+<span class="lineno"> 38</span>     <span class="p">};</span>
+<span class="lineno"> 39</span> 
+<span class="lineno"> 40</span>     <span class="n">std</span><span class="o">::</span><span class="n">string</span> <span class="n">A</span><span class="o">::</span><span class="n">ctor_dtor_recorder_</span><span class="p">;</span>
+<span class="lineno"> 41</span> 
+<span class="lineno"> 42</span>     <span class="k">class</span> <span class="nc">A2</span><span class="o">:</span> <span class="k">public</span> <span class="n">A</span> <span class="p">{</span>
+<span class="lineno"> 43</span>     <span class="p">};</span>
+<span class="lineno"> 44</span> 
+<span class="lineno"> 45</span>     <span class="k">class</span> <span class="nc">SharedPtrTest</span><span class="o">:</span> <span class="k">public</span> <span class="n">testing</span><span class="o">::</span><span class="n">Test</span> <span class="p">{</span>
+<span class="lineno"> 46</span>         <span class="k">protected</span><span class="o">:</span>
+<span class="lineno"> 47</span>             <span class="k">virtual</span> <span class="kt">void</span> <span class="n">SetUp</span><span class="p">()</span> <span class="p">{</span>
+<span class="lineno"> 48</span>                 <span class="n">A</span><span class="o">::</span><span class="n">ctor_dtor_recorder_</span><span class="p">.</span><span class="n">clear</span><span class="p">();</span>
+<span class="lineno"> 49</span>             <span class="p">}</span>
+<span class="lineno"> 50</span>     <span class="p">};</span>
+<span class="lineno"> 51</span> 
+<span class="lineno"> 52</span>     <span class="cp">#define AssertCtorDtor(expected) ASSERT_EQ((expected), A::ctor_dtor_recorder_)</span>
+<span class="lineno"> 53</span>     
+<span class="lineno"> 54</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="n">ctor</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 55</span>         <span class="n">A</span><span class="o">::</span><span class="n">ctor_dtor_recorder_</span><span class="p">.</span><span class="n">clear</span><span class="p">();</span>
+<span class="lineno"> 56</span>         <span class="p">{</span>
+<span class="lineno"> 57</span>             <span class="n">A</span><span class="o">*</span> <span class="n">a</span> <span class="o">=</span> <span class="k">new</span> <span class="n">A</span><span class="p">();</span>
+<span class="lineno"> 58</span>             <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p</span><span class="p">(</span><span class="n">a</span><span class="p">);</span>
+<span class="lineno"> 59</span>         <span class="p">}</span>
+<span class="lineno"> 60</span>         <span class="n">AssertCtorDtor</span><span class="p">(</span><span class="s">&quot;CD&quot;</span><span class="p">);</span>
+<span class="lineno"> 61</span>     <span class="p">}</span>
+<span class="lineno"> 62</span> 
+<span class="lineno"> 63</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="n">ctor_array_deleter</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 64</span>         <span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+<span class="lineno"> 65</span>         <span class="k">auto</span> <span class="n">x</span> <span class="o">=</span> <span class="p">[</span><span class="o">&amp;</span><span class="n">i</span><span class="p">](</span><span class="n">A</span><span class="o">*</span> <span class="n">a1</span><span class="p">)</span> <span class="p">{</span><span class="o">++</span><span class="n">i</span><span class="p">;</span> <span class="k">delete</span><span class="p">[]</span> <span class="n">a1</span><span class="p">;</span> <span class="p">};</span>
+<span class="lineno"> 66</span>         <span class="n">mp</span><span class="o">::</span><span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="p">[]</span><span class="o">&gt;</span> <span class="n">a</span><span class="p">(</span><span class="k">new</span> <span class="n">A</span><span class="p">[</span><span class="mi">5</span><span class="p">],</span> <span class="n">x</span><span class="p">);</span>
+<span class="lineno"> 67</span>         <span class="n">AssertCtorDtor</span><span class="p">(</span><span class="s">&quot;CCCCC&quot;</span><span class="p">);</span>
+<span class="lineno"> 68</span>         <span class="n">a</span><span class="p">.</span><span class="n">reset</span><span class="p">();</span>
+<span class="lineno"> 69</span>         <span class="n">AssertCtorDtor</span><span class="p">(</span><span class="s">&quot;CCCCCDDDDD&quot;</span><span class="p">);</span>
+<span class="lineno"> 70</span>     <span class="p">}</span>
+<span class="lineno"> 71</span> 
+<span class="lineno"> 72</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="n">ctor_array</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 73</span>         <span class="n">mp</span><span class="o">::</span><span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="p">[]</span><span class="o">&gt;</span> <span class="n">a</span><span class="p">(</span><span class="k">new</span> <span class="n">A</span><span class="p">[</span><span class="mi">5</span><span class="p">]);</span>
+<span class="lineno"> 74</span>         <span class="n">AssertCtorDtor</span><span class="p">(</span><span class="s">&quot;CCCCC&quot;</span><span class="p">);</span>
+<span class="lineno"> 75</span>         <span class="n">a</span><span class="p">.</span><span class="n">reset</span><span class="p">();</span>
+<span class="lineno"> 76</span>         <span class="n">AssertCtorDtor</span><span class="p">(</span><span class="s">&quot;CCCCCDDDDD&quot;</span><span class="p">);</span>
+<span class="lineno"> 77</span>     <span class="p">}</span>
+<span class="lineno"> 78</span> 
+<span class="lineno"> 79</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="k">nullptr</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 80</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p</span><span class="p">(</span><span class="k">nullptr</span><span class="p">);</span>
+<span class="lineno"> 81</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="k">nullptr</span><span class="p">,</span> <span class="n">p</span><span class="p">.</span><span class="n">get</span><span class="p">());</span>
+<span class="lineno"> 82</span>     <span class="p">}</span>
+<span class="lineno"> 83</span> 
+<span class="lineno"> 84</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="n">nullptr_deleter</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 85</span>         <span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+<span class="lineno"> 86</span>         <span class="k">auto</span> <span class="n">x</span> <span class="o">=</span> <span class="p">[</span><span class="o">&amp;</span><span class="n">i</span><span class="p">](</span><span class="n">A</span><span class="o">*</span> <span class="n">p1</span><span class="p">){</span><span class="o">++</span><span class="n">i</span><span class="p">;</span> <span class="k">delete</span> <span class="n">p1</span><span class="p">;</span> <span class="p">};</span>
+<span class="lineno"> 87</span>         <span class="p">{</span>
+<span class="lineno"> 88</span>             <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p</span><span class="p">(</span><span class="k">nullptr</span><span class="p">,</span> <span class="n">x</span><span class="p">);</span>
+<span class="lineno"> 89</span>             <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="k">nullptr</span><span class="p">,</span> <span class="n">p</span><span class="p">.</span><span class="n">get</span><span class="p">());</span>
+<span class="lineno"> 90</span>         <span class="p">}</span>
+<span class="lineno"> 91</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">i</span><span class="p">);</span>
+<span class="lineno"> 92</span>         <span class="n">AssertCtorDtor</span><span class="p">(</span><span class="s">&quot;&quot;</span><span class="p">);</span>
+<span class="lineno"> 93</span>     <span class="p">}</span>
+<span class="lineno"> 94</span> 
+<span class="lineno"> 95</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="n">ctor_aliasing</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno"> 96</span>         <span class="k">auto</span> <span class="n">pa</span> <span class="o">=</span> <span class="k">new</span> <span class="n">A</span><span class="p">();</span>
+<span class="lineno"> 97</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">a</span><span class="p">(</span><span class="n">pa</span><span class="p">);</span>
+<span class="lineno"> 98</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">B</span><span class="o">&gt;</span> <span class="n">b</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">a</span><span class="o">-&gt;</span><span class="n">b_</span><span class="p">);</span>
+<span class="lineno"> 99</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">b</span><span class="p">.</span><span class="n">use_count</span><span class="p">());</span>
+<span class="lineno">100</span>         <span class="n">a</span><span class="p">.</span><span class="n">reset</span><span class="p">();</span>
+<span class="lineno">101</span>         <span class="n">AssertCtorDtor</span><span class="p">(</span><span class="s">&quot;C&quot;</span><span class="p">);</span>
+<span class="lineno">102</span>         <span class="n">b</span><span class="o">-&gt;</span><span class="n">Inc</span><span class="p">();</span>
+<span class="lineno">103</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">pa</span><span class="o">-&gt;</span><span class="n">b_</span><span class="p">.</span><span class="n">value_</span><span class="p">);</span>
+<span class="lineno">104</span>         <span class="n">b</span><span class="p">.</span><span class="n">reset</span><span class="p">();</span>
+<span class="lineno">105</span>         <span class="n">AssertCtorDtor</span><span class="p">(</span><span class="s">&quot;CD&quot;</span><span class="p">);</span>
+<span class="lineno">106</span>     <span class="p">}</span>
+<span class="lineno">107</span> 
+<span class="lineno">108</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="n">copy_ctor</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">109</span>         <span class="p">{</span>
+<span class="lineno">110</span>             <span class="n">A</span><span class="o">*</span> <span class="n">a</span> <span class="o">=</span> <span class="k">new</span> <span class="n">A</span><span class="p">();</span>
+<span class="lineno">111</span>             <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p</span><span class="p">(</span><span class="n">a</span><span class="p">);</span>
+<span class="lineno">112</span>             <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p2</span><span class="p">(</span><span class="n">p</span><span class="p">);</span>
+<span class="lineno">113</span>             <span class="n">p2</span><span class="o">-&gt;</span><span class="n">Inc</span><span class="p">();</span>
+<span class="lineno">114</span>             <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">a</span><span class="o">-&gt;</span><span class="n">value_</span><span class="p">);</span>
+<span class="lineno">115</span>         <span class="p">}</span>
+<span class="lineno">116</span>         <span class="n">AssertCtorDtor</span><span class="p">(</span><span class="s">&quot;CD&quot;</span><span class="p">);</span>
+<span class="lineno">117</span>     <span class="p">}</span>
+<span class="lineno">118</span> 
+<span class="lineno">119</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="n">ctor_deletor</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">120</span>         <span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+<span class="lineno">121</span>         <span class="k">auto</span> <span class="n">x</span> <span class="o">=</span> <span class="p">[</span><span class="o">&amp;</span><span class="n">i</span><span class="p">](</span><span class="n">A</span><span class="o">*</span> <span class="n">p</span><span class="p">)</span> <span class="p">{</span><span class="o">++</span><span class="n">i</span><span class="p">;</span> <span class="k">delete</span> <span class="n">p</span><span class="p">;</span> <span class="p">};</span>
+<span class="lineno">122</span>         <span class="p">{</span>
+<span class="lineno">123</span>             <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p</span><span class="p">(</span><span class="k">new</span> <span class="n">A</span><span class="p">(),</span> <span class="n">x</span><span class="p">);</span>
+<span class="lineno">124</span>         <span class="p">}</span>
+<span class="lineno">125</span>         <span class="n">AssertCtorDtor</span><span class="p">(</span><span class="s">&quot;CD&quot;</span><span class="p">);</span>
+<span class="lineno">126</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">i</span><span class="p">);</span>
+<span class="lineno">127</span>     <span class="p">}</span>
+<span class="lineno">128</span> 
+<span class="lineno">129</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="n">ctor_difftype</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">130</span>         <span class="p">{</span>
+<span class="lineno">131</span>             <span class="n">A2</span><span class="o">*</span> <span class="n">a</span> <span class="o">=</span> <span class="k">new</span> <span class="n">A2</span><span class="p">();</span>
+<span class="lineno">132</span>             <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p</span><span class="p">(</span><span class="n">a</span><span class="p">);</span>
+<span class="lineno">133</span>         <span class="p">}</span>
+<span class="lineno">134</span>         <span class="n">AssertCtorDtor</span><span class="p">(</span><span class="s">&quot;CD&quot;</span><span class="p">);</span>
+<span class="lineno">135</span>     <span class="p">}</span>
+<span class="lineno">136</span> 
+<span class="lineno">137</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="n">copy_ctor_difftype</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">138</span>         <span class="p">{</span>
+<span class="lineno">139</span>             <span class="n">A2</span><span class="o">*</span> <span class="n">a</span> <span class="o">=</span> <span class="k">new</span> <span class="n">A2</span><span class="p">();</span>
+<span class="lineno">140</span>             <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A2</span><span class="o">&gt;</span> <span class="n">p</span><span class="p">(</span><span class="n">a</span><span class="p">);</span>
+<span class="lineno">141</span>             <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p2</span><span class="p">(</span><span class="n">p</span><span class="p">);</span>
+<span class="lineno">142</span>             <span class="n">p2</span><span class="o">-&gt;</span><span class="n">Inc</span><span class="p">();</span>
+<span class="lineno">143</span>             <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">a</span><span class="o">-&gt;</span><span class="n">value_</span><span class="p">);</span>
+<span class="lineno">144</span>         <span class="p">}</span>
+<span class="lineno">145</span>         <span class="n">AssertCtorDtor</span><span class="p">(</span><span class="s">&quot;CD&quot;</span><span class="p">);</span>
+<span class="lineno">146</span>     <span class="p">}</span>
+<span class="lineno">147</span> 
+<span class="lineno">148</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="n">move_ctor</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">149</span>         <span class="n">A</span><span class="o">*</span> <span class="n">a</span> <span class="o">=</span> <span class="k">new</span> <span class="n">A</span><span class="p">();</span>
+<span class="lineno">150</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p1</span><span class="p">(</span><span class="n">a</span><span class="p">);</span>
+<span class="lineno">151</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p2</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">p1</span><span class="p">));</span>
+<span class="lineno">152</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="k">nullptr</span><span class="p">,</span> <span class="n">p1</span><span class="p">.</span><span class="n">get</span><span class="p">());</span>
+<span class="lineno">153</span>         <span class="n">ASSERT_TRUE</span><span class="p">(</span><span class="n">p2</span><span class="p">.</span><span class="n">unique</span><span class="p">());</span>
+<span class="lineno">154</span>     <span class="p">}</span>
+<span class="lineno">155</span> 
+<span class="lineno">156</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="n">move_ctor_difftype</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">157</span>         <span class="n">A2</span><span class="o">*</span> <span class="n">a</span> <span class="o">=</span> <span class="k">new</span> <span class="n">A2</span><span class="p">();</span>
+<span class="lineno">158</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A2</span><span class="o">&gt;</span> <span class="n">p1</span><span class="p">(</span><span class="n">a</span><span class="p">);</span>
+<span class="lineno">159</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p2</span><span class="p">(</span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">p1</span><span class="p">));</span>
+<span class="lineno">160</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="k">nullptr</span><span class="p">,</span> <span class="n">p1</span><span class="p">.</span><span class="n">get</span><span class="p">());</span>
+<span class="lineno">161</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">p2</span><span class="p">.</span><span class="n">get</span><span class="p">());</span>
+<span class="lineno">162</span>     <span class="p">}</span>
+<span class="lineno">163</span> 
+<span class="lineno">164</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="n">assign_op</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">165</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p0</span><span class="p">;</span>
+<span class="lineno">166</span>         <span class="p">{</span>
+<span class="lineno">167</span>             <span class="n">A</span><span class="o">*</span> <span class="n">a</span> <span class="o">=</span> <span class="k">new</span> <span class="n">A</span><span class="p">();</span>
+<span class="lineno">168</span>             <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p</span><span class="p">(</span><span class="n">a</span><span class="p">);</span>
+<span class="lineno">169</span>             <span class="n">p0</span> <span class="o">=</span> <span class="n">p</span><span class="p">;</span>
+<span class="lineno">170</span>         <span class="p">}</span>
+<span class="lineno">171</span>         <span class="n">AssertCtorDtor</span><span class="p">(</span><span class="s">&quot;C&quot;</span><span class="p">);</span>
+<span class="lineno">172</span>     <span class="p">}</span>
+<span class="lineno">173</span> 
+<span class="lineno">174</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="n">reset</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">175</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p</span><span class="p">(</span><span class="k">new</span> <span class="n">A</span><span class="p">());</span>
+<span class="lineno">176</span>         <span class="n">AssertCtorDtor</span><span class="p">(</span><span class="s">&quot;C&quot;</span><span class="p">);</span>
+<span class="lineno">177</span>         <span class="n">p</span><span class="p">.</span><span class="n">reset</span><span class="p">();</span>
+<span class="lineno">178</span>         <span class="n">AssertCtorDtor</span><span class="p">(</span><span class="s">&quot;CD&quot;</span><span class="p">);</span>
+<span class="lineno">179</span>     <span class="p">}</span>
+<span class="lineno">180</span> 
+<span class="lineno">181</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="n">reset_difftype</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">182</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p</span><span class="p">(</span><span class="k">new</span> <span class="n">A</span><span class="p">());</span>
+<span class="lineno">183</span>         <span class="n">AssertCtorDtor</span><span class="p">(</span><span class="s">&quot;C&quot;</span><span class="p">);</span>
+<span class="lineno">184</span>         <span class="n">p</span><span class="p">.</span><span class="n">reset</span><span class="p">(</span><span class="k">new</span> <span class="n">A2</span><span class="p">());</span>
+<span class="lineno">185</span>         <span class="n">AssertCtorDtor</span><span class="p">(</span><span class="s">&quot;CCD&quot;</span><span class="p">);</span>
+<span class="lineno">186</span>     <span class="p">}</span>
+<span class="lineno">187</span> 
+<span class="lineno">188</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="n">reset_difftype_deletor</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">189</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p</span><span class="p">(</span><span class="k">new</span> <span class="n">A</span><span class="p">());</span>
+<span class="lineno">190</span>         <span class="n">AssertCtorDtor</span><span class="p">(</span><span class="s">&quot;C&quot;</span><span class="p">);</span>
+<span class="lineno">191</span>         <span class="kt">int</span> <span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+<span class="lineno">192</span>         <span class="k">auto</span> <span class="n">x</span> <span class="o">=</span> <span class="p">[</span><span class="o">&amp;</span><span class="n">i</span><span class="p">](</span><span class="n">A</span><span class="o">*</span> <span class="n">p1</span><span class="p">)</span> <span class="p">{</span><span class="o">++</span><span class="n">i</span><span class="p">;</span> <span class="k">delete</span> <span class="n">p1</span><span class="p">;</span> <span class="p">};</span>
+<span class="lineno">193</span>         <span class="n">p</span><span class="p">.</span><span class="n">reset</span><span class="p">(</span><span class="k">new</span> <span class="n">A2</span><span class="p">(),</span> <span class="n">x</span><span class="p">);</span>
+<span class="lineno">194</span>         <span class="n">AssertCtorDtor</span><span class="p">(</span><span class="s">&quot;CCD&quot;</span><span class="p">);</span>
+<span class="lineno">195</span>         <span class="n">p</span><span class="p">.</span><span class="n">reset</span><span class="p">();</span>
+<span class="lineno">196</span>         <span class="n">AssertCtorDtor</span><span class="p">(</span><span class="s">&quot;CCDD&quot;</span><span class="p">);</span>
+<span class="lineno">197</span>     <span class="p">}</span>
+<span class="lineno">198</span> 
+<span class="lineno">199</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="n">get</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">200</span>         <span class="n">A</span><span class="o">*</span> <span class="n">a</span> <span class="o">=</span> <span class="k">new</span> <span class="n">A</span><span class="p">();</span>
+<span class="lineno">201</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p</span><span class="p">(</span><span class="n">a</span><span class="p">);</span>
+<span class="lineno">202</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="n">a</span><span class="p">,</span> <span class="n">p</span><span class="p">.</span><span class="n">get</span><span class="p">());</span>
+<span class="lineno">203</span>         <span class="n">p</span><span class="p">.</span><span class="n">reset</span><span class="p">();</span>
+<span class="lineno">204</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="k">nullptr</span><span class="p">,</span> <span class="n">p</span><span class="p">.</span><span class="n">get</span><span class="p">());</span>
+<span class="lineno">205</span>     <span class="p">}</span>
+<span class="lineno">206</span> 
+<span class="lineno">207</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="n">arrow</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">208</span>         <span class="n">A</span><span class="o">*</span> <span class="n">a</span> <span class="o">=</span> <span class="k">new</span> <span class="n">A</span><span class="p">();</span>
+<span class="lineno">209</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p</span><span class="p">(</span><span class="n">a</span><span class="p">);</span>
+<span class="lineno">210</span>         <span class="n">p</span><span class="o">-&gt;</span><span class="n">Inc</span><span class="p">();</span>
+<span class="lineno">211</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">a</span><span class="o">-&gt;</span><span class="n">value_</span><span class="p">);</span>
+<span class="lineno">212</span>     <span class="p">}</span>
+<span class="lineno">213</span> 
+<span class="lineno">214</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="n">deference</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">215</span>         <span class="n">A</span><span class="o">*</span> <span class="n">a</span> <span class="o">=</span> <span class="k">new</span> <span class="n">A</span><span class="p">();</span>
+<span class="lineno">216</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p</span><span class="p">(</span><span class="n">a</span><span class="p">);</span>
+<span class="lineno">217</span>         <span class="p">(</span><span class="o">*</span><span class="n">p</span><span class="p">).</span><span class="n">Inc</span><span class="p">();</span>
+<span class="lineno">218</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">a</span><span class="o">-&gt;</span><span class="n">value_</span><span class="p">);</span>
+<span class="lineno">219</span>     <span class="p">}</span>
+<span class="lineno">220</span> 
+<span class="lineno">221</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="n">swap</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">222</span>         <span class="n">A</span><span class="o">*</span> <span class="n">a1</span> <span class="o">=</span> <span class="k">new</span> <span class="n">A</span><span class="p">();</span>
+<span class="lineno">223</span>         <span class="n">A</span><span class="o">*</span> <span class="n">a2</span> <span class="o">=</span> <span class="k">new</span> <span class="n">A</span><span class="p">();</span>
+<span class="lineno">224</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p1</span><span class="p">(</span><span class="n">a1</span><span class="p">),</span> <span class="n">p11</span><span class="p">(</span><span class="n">p1</span><span class="p">);</span>
+<span class="lineno">225</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p2</span><span class="p">(</span><span class="n">a2</span><span class="p">);</span>
+<span class="lineno">226</span>         <span class="n">p1</span><span class="p">.</span><span class="n">swap</span><span class="p">(</span><span class="n">p2</span><span class="p">);</span>
+<span class="lineno">227</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="n">a2</span><span class="p">,</span> <span class="n">p1</span><span class="p">.</span><span class="n">get</span><span class="p">());</span>
+<span class="lineno">228</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="n">a1</span><span class="p">,</span> <span class="n">p2</span><span class="p">.</span><span class="n">get</span><span class="p">());</span>
+<span class="lineno">229</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="n">a1</span><span class="p">,</span> <span class="n">p11</span><span class="p">.</span><span class="n">get</span><span class="p">());</span>
+<span class="lineno">230</span>     <span class="p">}</span>
+<span class="lineno">231</span> 
+<span class="lineno">232</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="n">use_count</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">233</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p1</span><span class="p">(</span><span class="k">new</span> <span class="n">A</span><span class="p">());</span>
+<span class="lineno">234</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">p1</span><span class="p">.</span><span class="n">use_count</span><span class="p">());</span>
+<span class="lineno">235</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p2</span><span class="p">;</span>
+<span class="lineno">236</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">p2</span><span class="p">.</span><span class="n">use_count</span><span class="p">());</span>
+<span class="lineno">237</span>         <span class="n">p2</span> <span class="o">=</span> <span class="n">p1</span><span class="p">;</span>
+<span class="lineno">238</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">p1</span><span class="p">.</span><span class="n">use_count</span><span class="p">());</span>
+<span class="lineno">239</span>         <span class="n">p2</span><span class="p">.</span><span class="n">reset</span><span class="p">();</span>
+<span class="lineno">240</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">p1</span><span class="p">.</span><span class="n">use_count</span><span class="p">());</span>
+<span class="lineno">241</span>         <span class="n">p1</span><span class="p">.</span><span class="n">reset</span><span class="p">();</span>
+<span class="lineno">242</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">p1</span><span class="p">.</span><span class="n">use_count</span><span class="p">());</span>
+<span class="lineno">243</span>     <span class="p">}</span>
+<span class="lineno">244</span> 
+<span class="lineno">245</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="n">unique</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">246</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p1</span><span class="p">(</span><span class="k">new</span> <span class="n">A</span><span class="p">());</span>
+<span class="lineno">247</span>         <span class="n">ASSERT_TRUE</span><span class="p">(</span><span class="n">p1</span><span class="p">.</span><span class="n">unique</span><span class="p">());</span>
+<span class="lineno">248</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p2</span><span class="p">;</span>
+<span class="lineno">249</span>         <span class="n">ASSERT_FALSE</span><span class="p">(</span><span class="n">p2</span><span class="p">.</span><span class="n">unique</span><span class="p">());</span>
+<span class="lineno">250</span>         <span class="n">p2</span> <span class="o">=</span> <span class="n">p1</span><span class="p">;</span>
+<span class="lineno">251</span>         <span class="n">ASSERT_FALSE</span><span class="p">(</span><span class="n">p1</span><span class="p">.</span><span class="n">unique</span><span class="p">());</span>
+<span class="lineno">252</span>         <span class="n">ASSERT_FALSE</span><span class="p">(</span><span class="n">p2</span><span class="p">.</span><span class="n">unique</span><span class="p">());</span>
+<span class="lineno">253</span>         <span class="n">p2</span><span class="p">.</span><span class="n">reset</span><span class="p">();</span>
+<span class="lineno">254</span>         <span class="n">ASSERT_TRUE</span><span class="p">(</span><span class="n">p1</span><span class="p">.</span><span class="n">unique</span><span class="p">());</span>
+<span class="lineno">255</span>         <span class="n">ASSERT_FALSE</span><span class="p">(</span><span class="n">p2</span><span class="p">.</span><span class="n">unique</span><span class="p">());</span>
+<span class="lineno">256</span>         <span class="n">p1</span><span class="p">.</span><span class="n">reset</span><span class="p">();</span>
+<span class="lineno">257</span>         <span class="n">ASSERT_FALSE</span><span class="p">(</span><span class="n">p1</span><span class="p">.</span><span class="n">unique</span><span class="p">());</span>
+<span class="lineno">258</span>     <span class="p">}</span>
+<span class="lineno">259</span> 
+<span class="lineno">260</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="kt">bool</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">261</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p</span><span class="p">(</span><span class="k">new</span> <span class="n">A</span><span class="p">());</span>
+<span class="lineno">262</span>         <span class="n">ASSERT_TRUE</span><span class="p">((</span><span class="kt">bool</span><span class="p">)</span><span class="n">p</span><span class="p">);</span>
+<span class="lineno">263</span>         <span class="kt">bool</span> <span class="n">v</span> <span class="o">=</span> <span class="nb">false</span><span class="p">;</span>
+<span class="lineno">264</span>         <span class="k">if</span> <span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">265</span>             <span class="n">v</span> <span class="o">=</span> <span class="nb">true</span><span class="p">;</span>
+<span class="lineno">266</span>         <span class="p">}</span>
+<span class="lineno">267</span>     
+<span class="lineno">268</span>         <span class="n">ASSERT_TRUE</span><span class="p">(</span><span class="n">v</span><span class="p">);</span>
+<span class="lineno">269</span>         <span class="n">p</span><span class="p">.</span><span class="n">reset</span><span class="p">();</span>
+<span class="lineno">270</span>         <span class="n">ASSERT_FALSE</span><span class="p">((</span><span class="kt">bool</span><span class="p">)</span><span class="n">p</span><span class="p">);</span>
+<span class="lineno">271</span>     <span class="p">}</span>
+<span class="lineno">272</span> 
+<span class="lineno">273</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="n">owner_before</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">274</span>         <span class="n">A</span><span class="o">*</span> <span class="n">a1</span> <span class="o">=</span> <span class="k">new</span> <span class="n">A</span><span class="p">(),</span> <span class="o">*</span><span class="n">a2</span> <span class="o">=</span> <span class="k">new</span> <span class="n">A</span><span class="p">();</span>
+<span class="lineno">275</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p1</span><span class="p">(</span><span class="n">a1</span><span class="p">),</span> <span class="n">p2</span><span class="p">(</span><span class="n">a2</span><span class="p">);</span>
+<span class="lineno">276</span>         <span class="n">ASSERT_TRUE</span><span class="p">(</span><span class="n">p1</span><span class="p">.</span><span class="n">owner_before</span><span class="p">(</span><span class="n">p2</span><span class="p">)</span> <span class="o">||</span> <span class="n">p2</span><span class="p">.</span><span class="n">owner_before</span><span class="p">(</span><span class="n">p1</span><span class="p">));</span>
+<span class="lineno">277</span>         <span class="n">ASSERT_FALSE</span><span class="p">(</span><span class="n">p1</span><span class="p">.</span><span class="n">owner_before</span><span class="p">(</span><span class="n">p2</span><span class="p">)</span> <span class="o">&amp;&amp;</span> <span class="n">p2</span><span class="p">.</span><span class="n">owner_before</span><span class="p">(</span><span class="n">p1</span><span class="p">));</span>
+<span class="lineno">278</span>         <span class="n">p2</span> <span class="o">=</span> <span class="n">p1</span><span class="p">;</span>
+<span class="lineno">279</span>         <span class="n">ASSERT_FALSE</span><span class="p">(</span><span class="n">p1</span><span class="p">.</span><span class="n">owner_before</span><span class="p">(</span><span class="n">p2</span><span class="p">));</span>
+<span class="lineno">280</span>         <span class="n">ASSERT_FALSE</span><span class="p">(</span><span class="n">p2</span><span class="p">.</span><span class="n">owner_before</span><span class="p">(</span><span class="n">p1</span><span class="p">));</span>
+<span class="lineno">281</span>     <span class="p">}</span>
+<span class="lineno">282</span> 
+<span class="lineno">283</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="n">make_shared</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">284</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">a</span> <span class="o">=</span> <span class="n">make_shared</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span><span class="p">(</span><span class="mi">3</span><span class="p">);</span>
+<span class="lineno">285</span>         <span class="n">a</span><span class="o">-&gt;</span><span class="n">Inc</span><span class="p">();</span>
+<span class="lineno">286</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="mi">4</span><span class="p">,</span> <span class="n">a</span><span class="o">-&gt;</span><span class="n">value_</span><span class="p">);</span>
+<span class="lineno">287</span>         <span class="n">a</span> <span class="o">=</span> <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span><span class="p">(</span><span class="k">new</span> <span class="n">A</span><span class="p">(</span><span class="mi">8</span><span class="p">));</span>
+<span class="lineno">288</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="mi">8</span><span class="p">,</span> <span class="n">a</span><span class="o">-&gt;</span><span class="n">value_</span><span class="p">);</span>
+<span class="lineno">289</span>         <span class="n">AssertCtorDtor</span><span class="p">(</span><span class="s">&quot;CCD&quot;</span><span class="p">);</span>
+<span class="lineno">290</span>     <span class="p">}</span>
+<span class="lineno">291</span>         
+<span class="lineno">292</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="n">swap_global</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">293</span>         <span class="n">A</span><span class="o">*</span> <span class="n">a1</span> <span class="o">=</span> <span class="k">new</span> <span class="n">A</span><span class="p">(),</span> <span class="o">*</span><span class="n">a2</span> <span class="o">=</span> <span class="k">new</span> <span class="n">A2</span><span class="p">();</span>
+<span class="lineno">294</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p1</span><span class="p">(</span><span class="n">a1</span><span class="p">),</span> <span class="n">p2</span><span class="p">(</span><span class="n">a2</span><span class="p">);</span>
+<span class="lineno">295</span>         <span class="kt">bool</span> <span class="n">ownerBefore1</span> <span class="o">=</span> <span class="n">p1</span><span class="p">.</span><span class="n">owner_before</span><span class="p">(</span><span class="n">p2</span><span class="p">);</span>
+<span class="lineno">296</span>         <span class="n">swap</span><span class="p">(</span><span class="n">p1</span><span class="p">,</span> <span class="n">p2</span><span class="p">);</span>
+<span class="lineno">297</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="n">a2</span><span class="p">,</span> <span class="n">p1</span><span class="p">.</span><span class="n">get</span><span class="p">());</span>
+<span class="lineno">298</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="n">a1</span><span class="p">,</span> <span class="n">p2</span><span class="p">.</span><span class="n">get</span><span class="p">());</span>
+<span class="lineno">299</span>         <span class="kt">bool</span> <span class="n">ownerBefore2</span> <span class="o">=</span> <span class="n">p1</span><span class="p">.</span><span class="n">owner_before</span><span class="p">(</span><span class="n">p2</span><span class="p">);</span>
+<span class="lineno">300</span>         <span class="n">ASSERT_TRUE</span><span class="p">(</span><span class="n">ownerBefore1</span> <span class="o">||</span> <span class="n">ownerBefore2</span><span class="p">);</span>
+<span class="lineno">301</span>         <span class="n">ASSERT_FALSE</span><span class="p">(</span><span class="n">ownerBefore1</span> <span class="o">&amp;&amp;</span> <span class="n">ownerBefore2</span><span class="p">);</span>
+<span class="lineno">302</span>     <span class="p">}</span>
+<span class="lineno">303</span> 
+<span class="lineno">304</span>     <span class="n">TEST_F</span><span class="p">(</span><span class="n">SharedPtrTest</span><span class="p">,</span> <span class="n">relation_op</span><span class="p">)</span> <span class="p">{</span>
+<span class="lineno">305</span>         <span class="n">A</span><span class="o">*</span> <span class="n">a1</span> <span class="o">=</span> <span class="k">new</span> <span class="n">A</span><span class="p">();</span>
+<span class="lineno">306</span>         <span class="n">A2</span><span class="o">*</span> <span class="n">a2</span> <span class="o">=</span> <span class="k">new</span> <span class="n">A2</span><span class="p">();</span>
+<span class="lineno">307</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A</span><span class="o">&gt;</span> <span class="n">p1</span><span class="p">(</span><span class="n">a1</span><span class="p">);</span>
+<span class="lineno">308</span>         <span class="n">shared_ptr</span><span class="o">&lt;</span><span class="n">A2</span><span class="o">&gt;</span> <span class="n">p2</span><span class="p">(</span><span class="n">a2</span><span class="p">);</span>
+<span class="lineno">309</span>         <span class="n">ASSERT_TRUE</span><span class="p">(</span><span class="n">p1</span> <span class="o">!=</span> <span class="n">p2</span><span class="p">);</span>
+<span class="lineno">310</span>         <span class="n">ASSERT_FALSE</span><span class="p">(</span><span class="n">p1</span> <span class="o">==</span> <span class="n">p2</span><span class="p">);</span>
+<span class="lineno">311</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="n">p1</span> <span class="o">&lt;</span> <span class="n">p2</span><span class="p">,</span> <span class="n">a1</span> <span class="o">&lt;</span> <span class="n">a2</span><span class="p">);</span>
+<span class="lineno">312</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="n">p1</span> <span class="o">&gt;</span> <span class="n">p2</span><span class="p">,</span> <span class="n">a1</span> <span class="o">&gt;</span> <span class="n">a2</span><span class="p">);</span>
+<span class="lineno">313</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="n">p1</span> <span class="o">&lt;=</span> <span class="n">p2</span><span class="p">,</span> <span class="n">a1</span> <span class="o">&lt;=</span> <span class="n">a2</span><span class="p">);</span>
+<span class="lineno">314</span>         <span class="n">ASSERT_EQ</span><span class="p">(</span><span class="n">p1</span> <span class="o">&gt;=</span> <span class="n">p2</span><span class="p">,</span> <span class="n">a1</span> <span class="o">&gt;=</span> <span class="n">a2</span><span class="p">);</span>
+<span class="lineno">315</span> 
+<span class="lineno">316</span>         <span class="n">p1</span> <span class="o">=</span> <span class="n">p2</span><span class="p">;</span>
+<span class="lineno">317</span>         <span class="n">ASSERT_TRUE</span><span class="p">(</span><span class="n">p1</span> <span class="o">==</span> <span class="n">p2</span><span class="p">);</span>
+<span class="lineno">318</span>         <span class="n">ASSERT_FALSE</span><span class="p">(</span><span class="n">p1</span> <span class="o">!=</span> <span class="n">p2</span><span class="p">);</span>
+<span class="lineno">319</span>         <span class="n">ASSERT_FALSE</span><span class="p">(</span><span class="n">p1</span> <span class="o">&lt;</span> <span class="n">p2</span><span class="p">);</span>
+<span class="lineno">320</span>         <span class="n">ASSERT_TRUE</span><span class="p">(</span><span class="n">p1</span> <span class="o">&lt;=</span> <span class="n">p2</span><span class="p">);</span>
+<span class="lineno">321</span>         <span class="n">ASSERT_FALSE</span><span class="p">(</span><span class="n">p1</span> <span class="o">&gt;</span> <span class="n">p2</span><span class="p">);</span>
+<span class="lineno">322</span>         <span class="n">ASSERT_TRUE</span><span class="p">(</span><span class="n">p1</span> <span class="o">&gt;=</span> <span class="n">p2</span><span class="p">);</span>
+<span class="lineno">323</span> 
+<span class="lineno">324</span>     
+<span class="lineno">325</span>         <span class="n">ASSERT_FALSE</span><span class="p">(</span><span class="n">p1</span> <span class="o">==</span> <span class="k">nullptr</span><span class="p">);</span>
+<span class="lineno">326</span>         <span class="n">ASSERT_FALSE</span><span class="p">(</span><span class="k">nullptr</span> <span class="o">==</span> <span class="n">p1</span><span class="p">);</span>
+<span class="lineno">327</span>         <span class="n">ASSERT_TRUE</span><span class="p">(</span><span class="n">p1</span> <span class="o">!=</span> <span class="k">nullptr</span><span class="p">);</span>
+<span class="lineno">328</span>         <span class="n">ASSERT_TRUE</span><span class="p">(</span><span class="k">nullptr</span> <span class="o">!=</span> <span class="n">p1</span><span class="p">);</span>
+<span class="lineno">329</span>         <span class="n">ASSERT_FALSE</span><span class="p">(</span><span class="n">p1</span> <span class="o">&lt;</span> <span class="k">nullptr</span><span class="p">);</span>
+<span class="lineno">330</span>         <span class="n">ASSERT_FALSE</span><span class="p">(</span><span class="n">p1</span> <span class="o">&lt;=</span> <span class="k">nullptr</span><span class="p">);</span>
+<span class="lineno">331</span>         <span class="n">ASSERT_TRUE</span><span class="p">(</span><span class="k">nullptr</span> <span class="o">&lt;</span> <span class="n">p1</span><span class="p">);</span>
+<span class="lineno">332</span>         <span class="n">ASSERT_TRUE</span><span class="p">(</span><span class="k">nullptr</span> <span class="o">&lt;=</span> <span class="n">p1</span><span class="p">);</span>
+<span class="lineno">333</span>         <span class="n">ASSERT_TRUE</span><span class="p">(</span><span class="n">p1</span> <span class="o">&gt;</span> <span class="k">nullptr</span><span class="p">);</span>
+<span class="lineno">334</span>         <span class="n">ASSERT_TRUE</span><span class="p">(</span><span class="n">p1</span> <span class="o">&gt;=</span> <span class="k">nullptr</span><span class="p">);</span>
+<span class="lineno">335</span>         <span class="n">ASSERT_FALSE</span><span class="p">(</span><span class="k">nullptr</span> <span class="o">&gt;</span> <span class="n">p1</span><span class="p">);</span>
+<span class="lineno">336</span>         <span class="n">ASSERT_FALSE</span><span class="p">(</span><span class="k">nullptr</span> <span class="o">&gt;=</span> <span class="n">p1</span><span class="p">);</span>
+<span class="lineno">337</span> 
+<span class="lineno">338</span>         <span class="n">p2</span><span class="p">.</span><span class="n">reset</span><span class="p">();</span>
+<span class="lineno">339</span>         <span class="n">ASSERT_TRUE</span><span class="p">(</span><span class="n">p2</span> <span class="o">==</span> <span class="k">nullptr</span><span class="p">);</span>
+<span class="lineno">340</span>         <span class="n">ASSERT_TRUE</span><span class="p">(</span><span class="k">nullptr</span> <span class="o">==</span> <span class="n">p2</span><span class="p">);</span>
+<span class="lineno">341</span>         <span class="n">ASSERT_FALSE</span><span class="p">(</span><span class="n">p2</span> <span class="o">!=</span> <span class="k">nullptr</span><span class="p">);</span>
+<span class="lineno">342</span>         <span class="n">ASSERT_FALSE</span><span class="p">(</span><span class="k">nullptr</span> <span class="o">!=</span> <span class="n">p2</span><span class="p">);</span>
+<span class="lineno">343</span>         <span class="n">ASSERT_FALSE</span><span class="p">(</span><span class="n">p2</span> <span class="o">&lt;</span> <span class="k">nullptr</span><span class="p">);</span>
+<span class="lineno">344</span>         <span class="n">ASSERT_TRUE</span><span class="p">(</span><span class="n">p2</span> <span class="o">&lt;=</span> <span class="k">nullptr</span><span class="p">);</span>
+<span class="lineno">345</span>         <span class="n">ASSERT_FALSE</span><span class="p">(</span><span class="k">nullptr</span> <span class="o">&lt;</span> <span class="n">p2</span><span class="p">);</span>
+<span class="lineno">346</span>         <span class="n">ASSERT_TRUE</span><span class="p">(</span><span class="k">nullptr</span> <span class="o">&lt;=</span> <span class="n">p2</span><span class="p">);</span>
+<span class="lineno">347</span>         <span class="n">ASSERT_FALSE</span><span class="p">(</span><span class="n">p2</span> <span class="o">&gt;</span> <span class="k">nullptr</span><span class="p">);</span>
+<span class="lineno">348</span>         <span class="n">ASSERT_TRUE</span><span class="p">(</span><span class="n">p2</span> <span class="o">&gt;=</span> <span class="k">nullptr</span><span class="p">);</span>
+<span class="lineno">349</span>         <span class="n">ASSERT_FALSE</span><span class="p">(</span><span class="k">nullptr</span> <span class="o">&gt;</span> <span class="n">p2</span><span class="p">);</span>
+<span class="lineno">350</span>         <span class="n">ASSERT_TRUE</span><span class="p">(</span><span class="k">nullptr</span> <span class="o">&gt;=</span> <span class="n">p2</span><span class="p">);</span>
+<span class="lineno">351</span>     <span class="p">}</span>
+<span class="lineno">352</span> <span class="p">}</span></code></pre></div>
+
+
+      </div>
+    </div>
+
+    <footer class="site-footer">
+
+  <div class="wrapper">
+
+    <h2 class="footer-heading">QAMichaelPeng</h2>
+
+    <div class="footer-col-wrapper">
+      <div class="footer-col  footer-col-1">
+        <ul class="contact-list">
+          <li>QAMichaelPeng</li>
+          <li><a href="mailto:Not Available">Not Available</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-col  footer-col-2">
+        <ul class="social-media-list">
+          
+          <li>
+            <a href="https://github.com/QAMichaelPeng">
+              <span class="icon  icon--github">
+                <svg viewBox="0 0 16 16">
+                  <path fill="#828282" d="M7.999,0.431c-4.285,0-7.76,3.474-7.76,7.761 c0,3.428,2.223,6.337,5.307,7.363c0.388,0.071,0.53-0.168,0.53-0.374c0-0.184-0.007-0.672-0.01-1.32 c-2.159,0.469-2.614-1.04-2.614-1.04c-0.353-0.896-0.862-1.135-0.862-1.135c-0.705-0.481,0.053-0.472,0.053-0.472 c0.779,0.055,1.189,0.8,1.189,0.8c0.692,1.186,1.816,0.843,2.258,0.645c0.071-0.502,0.271-0.843,0.493-1.037 C4.86,11.425,3.049,10.76,3.049,7.786c0-0.847,0.302-1.54,0.799-2.082C3.768,5.507,3.501,4.718,3.924,3.65 c0,0,0.652-0.209,2.134,0.796C6.677,4.273,7.34,4.187,8,4.184c0.659,0.003,1.323,0.089,1.943,0.261 c1.482-1.004,2.132-0.796,2.132-0.796c0.423,1.068,0.157,1.857,0.077,2.054c0.497,0.542,0.798,1.235,0.798,2.082 c0,2.981-1.814,3.637-3.543,3.829c0.279,0.24,0.527,0.713,0.527,1.437c0,1.037-0.01,1.874-0.01,2.129 c0,0.208,0.14,0.449,0.534,0.373c3.081-1.028,5.302-3.935,5.302-7.362C15.76,3.906,12.285,0.431,7.999,0.431z"/>
+                </svg>
+              </span>
+
+              <span class="username">QAMichaelPeng</span>
+            </a>
+          </li>
+          
+
+          
+        </ul>
+      </div>
+
+      <div class="footer-col  footer-col-3">
+        <p class="text">Thinking, coding.
+</p>
+      </div>
+    </div>
+
+  </div>
+
+</footer>
+
+
+  </body>
+
+</html>
