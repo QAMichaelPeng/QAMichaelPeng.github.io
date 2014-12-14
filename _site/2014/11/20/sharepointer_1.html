@@ -38,6 +38,8 @@
         
           
         
+          
+        
       </div>
     </nav>
 
@@ -48,9 +50,19 @@
 
     <div class="page-content">
       <div class="wrapper">
-        <p>shared_ptr is a smart pointer since c++ 11 that will release you from managing the life cycle of objects shared among lots of components without an explicit owner. You can learn it from <a href="http://www.cplusplus.com/reference/memory/shared_ptr/">cplusplus.com</a>. For more details and practice, <a href="http://www.boost.org/doc/libs/1_57_0/libs/smart_ptr/shared_ptr.htm">boost</a> is a great resource.</p>
+        <div class="post">
+
+  <header class="post-header">
+    <h1 class="post-title">make a shared_ptr from scratch</h1>
+    <p class="post-meta">Nov 20, 2014</p>
+  </header>
+
+  <article class="post-content">
+    <p>shared_ptr is a smart pointer since c++ 11 that will release you from managing the life cycle of objects shared among lots of components without an explicit owner. You can learn it from <a href="http://www.cplusplus.com/reference/memory/shared_ptr/">cplusplus.com</a>. For more details and practice, <a href="http://www.boost.org/doc/libs/1_57_0/libs/smart_ptr/shared_ptr.htm">boost</a> is a great resource.</p>
 
 <p>Let’s consider an interesting question: how to build a shared_ptr from the scratch.</p>
+
+<h1 id="reference-counter">Reference counter</h1>
 
 <ul>
   <li>You must have some mechanism to manage the reference count.</li>
@@ -267,6 +279,8 @@ Here’s the shared_ptr class.</p>
 <span class="lineno">126</span>         <span class="k">friend</span> <span class="k">class</span> <span class="nc">shared_ptr</span><span class="p">;</span>
 <span class="lineno">127</span> <span class="p">};</span></code></pre></div>
 
+<h1 id="customized-deleter">Customized deleter</h1>
+
 <p>To support customize deleter, we should add another class RefCountDel whose constructor accept a second argument deletor.</p>
 
 <div class="highlight"><pre><code class="language-c--" data-lang="c++"><span class="lineno"> 1</span> <span class="c1">// handle resources with deleter</span>
@@ -300,6 +314,8 @@ Here’s the shared_ptr class.</p>
 <span class="lineno">29</span>     <span class="p">}</span>
 <span class="lineno">30</span>     <span class="c1">// ...</span>
 <span class="lineno">31</span> <span class="p">};</span></code></pre></div>
+
+<h1 id="array-support">Array support</h1>
 
 <p>shared_ptr in C++ 11 doesn’t support array. We can extend our shared_ptr to support it. To support array, we should create shared_ptr with a customized deleter, like this:</p>
 
@@ -366,7 +382,7 @@ Here’s the shared_ptr class.</p>
 <span class="lineno">48</span>     <span class="p">...</span>
 <span class="lineno">49</span> <span class="p">}</span></code></pre></div>
 
-<p>Alias constructor</p>
+<h1 id="alias-constructor">Alias constructor</h1>
 
 <p>In shared_ptr we stored two pointers, one is the stored pointer ptr<em>, one is the ref count pointer pref</em>. Since pref_ has a copy of the stored pointer, why we store another copy in the shared_ptr object? This is for alias consturector. 
 Think about a scenario: you have a big object a in type A allocated by new, and it has a small field b with type B. You want to keep a shared_ptr for b, how can you do this?</p>
@@ -395,6 +411,8 @@ Think about a scenario: you have a big object a in type A allocated by new, and 
 <span class="lineno">5</span>         <span class="n">pref_</span><span class="o">-&gt;</span><span class="n">Incref</span><span class="p">();</span>
 <span class="lineno">6</span>     <span class="p">}</span>
 <span class="lineno">7</span> <span class="p">}</span></code></pre></div>
+
+<h1 id="makeshared">make_shared</h1>
 
 <p>So far everything is OK, except that to allocate an object with an shared_ptr, we need to new, one for the object itself, and another is for the refCount. How can we use only one memory allocation to allocate the two object? One idea is to put the stored object as a field of ref count object. We can know the object size at compile time, but how can we initialize it in the runtime with the infinite possibilities of constructor? Fortunatelly c++ 11 brings us <a href="http://en.wikipedia.org/wiki/Variadic_template">variadic template</a> and <a href="http://en.cppreference.com/w/cpp/utility/forward">perfect forwarding</a>. So we can use (placement new)[http://en.wikipedia.org/wiki/Placement_syntax] to initialize the stored object with arguments we don’t know in the templates.</p>
 
@@ -428,6 +446,8 @@ Think about a scenario: you have a big object a in type A allocated by new, and 
 <span class="lineno">28</span>     <span class="n">p</span><span class="p">.</span><span class="n">reset_ref_0</span><span class="p">(</span><span class="n">obj</span><span class="o">-&gt;</span><span class="n">Get</span><span class="p">(),</span> <span class="n">obj</span><span class="p">);</span>
 <span class="lineno">29</span>     <span class="k">return</span> <span class="n">p</span><span class="p">;</span>
 <span class="lineno">30</span> <span class="p">}</span></code></pre></div>
+
+<h1 id="code-list">Code list</h1>
 
 <p>Here’s the full code list:</p>
 
@@ -1184,6 +1204,10 @@ Think about a scenario: you have a big object a in type A allocated by new, and 
 <span class="lineno">351</span>     <span class="p">}</span>
 <span class="lineno">352</span> <span class="p">}</span></code></pre></div>
 
+
+  </article>
+
+</div>
 
       </div>
     </div>

@@ -1,10 +1,14 @@
 ---
 title: make a shared_ptr from scratch
-layout: default
+layout: post
 ---
 shared_ptr is a smart pointer since c++ 11 that will release you from managing the life cycle of objects shared among lots of components without an explicit owner. You can learn it from [cplusplus.com](http://www.cplusplus.com/reference/memory/shared_ptr/). For more details and practice, [boost](http://www.boost.org/doc/libs/1_57_0/libs/smart_ptr/shared_ptr.htm) is a great resource.
 
+
 Let's consider an interesting question: how to build a shared_ptr from the scratch.
+
+Reference counter
+=================
 
 * You must have some mechanism to manage the reference count.
 * The reference count operation should be thread safe.
@@ -219,6 +223,9 @@ private:
 		friend class shared_ptr;
 };
 {% endhighlight%}
+Customized deleter
+==================
+
 To support customize deleter, we should add another class RefCountDel whose constructor accept a second argument deletor.
 {% highlight c++ linenos tabsize=4 %}
 // handle resources with deleter
@@ -253,6 +260,10 @@ template <class T> shared_ptr {
 	// ...
 };
 {% endhighlight %}
+
+Array support
+=============
+
 shared_ptr in C++ 11 doesn't support array. We can extend our shared_ptr to support it. To support array, we should create shared_ptr with a customized deleter, like this:
 {% highlight c++ linenos tabsize=4 %}
 shared_ptr<int> p(new int[10], std::default_delete<int[]>());
@@ -319,6 +330,7 @@ private:
 {% endhighlight %}
 
 Alias constructor
+=================
 
 In shared_ptr we stored two pointers, one is the stored pointer ptr_, one is the ref count pointer pref_. Since pref_ has a copy of the stored pointer, why we store another copy in the shared_ptr object? This is for alias consturector. 
 Think about a scenario: you have a big object a in type A allocated by new, and it has a small field b with type B. You want to keep a shared_ptr for b, how can you do this?
@@ -352,6 +364,8 @@ template <class U> shared_ptr(const shared_ptr<U>& rhs, element_type* ptr):ptr_(
 }
 {% endhighlight %}
 
+make_shared
+===========
 
 So far everything is OK, except that to allocate an object with an shared_ptr, we need to new, one for the object itself, and another is for the refCount. How can we use only one memory allocation to allocate the two object? One idea is to put the stored object as a field of ref count object. We can know the object size at compile time, but how can we initialize it in the runtime with the infinite possibilities of constructor? Fortunatelly c++ 11 brings us [variadic template](http://en.wikipedia.org/wiki/Variadic_template) and [perfect forwarding](http://en.cppreference.com/w/cpp/utility/forward). So we can use (placement new)[http://en.wikipedia.org/wiki/Placement_syntax] to initialize the stored object with arguments we don't know in the templates.
 {% highlight c++ linenos tabsize=4 %}
@@ -386,6 +400,9 @@ shared_ptr<T> make_shared(Types&&... args) {
     return p;
 }
 {% endhighlight %}
+
+Code list
+=========
 
 Here's the full code list:
 

@@ -38,6 +38,8 @@
         
           
         
+          
+        
       </div>
     </nav>
 
@@ -48,7 +50,15 @@
 
     <div class="page-content">
       <div class="wrapper">
-        <p>How many ways are there to push and pop n elements into and out a stack? We marked E as push and L as pop, the question can be converted to: how many ways to represent a 2n length string with E and L that in any of its prefixes, numbers of E are no less than numbers of L. If a 2n string composed by E and L can represent a way to push and pop n elements, we call it a good string.</p>
+        <div class="post">
+
+  <header class="post-header">
+    <h1 class="post-title">Catalan number</h1>
+    <p class="post-meta">Nov 23, 2014</p>
+  </header>
+
+  <article class="post-content">
+    <p>How many ways are there to push and pop n elements into and out a stack? We marked E as push and L as pop, the question can be converted to: how many ways to represent a 2n length string with E and L that in any of its prefixes, numbers of E are no less than numbers of L. If a 2n string composed by E and L can represent a way to push and pop n elements, we call it a good string.</p>
 
 <p>From a 2n string with n E and n L, find first L before which it there’re same Es and Ls.  If we can find such an L, the string doesn’t satisfy conditions above. We named such strings as bad string. </p>
 
@@ -81,6 +91,10 @@ The good string number is: C(2n, n) - C(2n, n-1) = C(2n, n) / (n+1). This is the
 
 <p>Example 5: Divide a convex polygon to triangles. T(2) = 1, T(3) = T(2)*T(2)=1, T(4) = T(2) * T(3) + T(3) * T(2)= 1, T(5) = T(2) * T(4) + T(3) * T(3) + T(4) * T(2) = Cat(n-2) (Select one side AB, select C from the other n-2 points to get a triangle, so there’s a pologon of k points on the side of AC, k = 2 to n-1, on the side BC, there’s a pologon of n+1-k points(C is the common points of two polygons), T(n)=sum(T(2)T(n-1)+…+T(n-1)T(2))</p>
 
+
+  </article>
+
+</div>
 
       </div>
     </div>

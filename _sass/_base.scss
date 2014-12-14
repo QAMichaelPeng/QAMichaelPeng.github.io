@@ -202,3 +202,10 @@ pre {
         }
     }
 }
+
+table {
+    border-spacing: 0px;
+}
+table, th, tr, td, tbody, thead {
+    border: 1px solid black;
+}

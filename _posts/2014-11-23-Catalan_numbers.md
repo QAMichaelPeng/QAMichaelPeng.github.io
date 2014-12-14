@@ -1,6 +1,6 @@
 ---
 title: Catalan number
-layout: default
+layout: post
 ---
 How many ways are there to push and pop n elements into and out a stack? We marked E as push and L as pop, the question can be converted to: how many ways to represent a 2n length string with E and L that in any of its prefixes, numbers of E are no less than numbers of L. If a 2n string composed by E and L can represent a way to push and pop n elements, we call it a good string.
 
