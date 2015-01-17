@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width initial-scale=1" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+
+    <title>Yet Another Hadoop Build Tutorial for Windows</title>
+    <meta name="description" content="Thinking, coding.
+">
+
+    <link rel="stylesheet" href="/css/main.css">
+    <link rel="canonical" href="http://QAMichaelPeng.github.io/2015/01/15/hadoop_build.html">
+</head>
+
+
+  <body>
+
+    <header class="site-header">
+
+  <div class="wrapper">
+
+    <a class="site-title" href="/">QAMichaelPeng</a>
+
+    <nav class="site-nav">
+      <a href="#" class="menu-icon">
+        <svg viewBox="0 0 18 15">
+          <path fill="#424242" d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.031C17.335,0,18,0.665,18,1.484L18,1.484z"/>
+          <path fill="#424242" d="M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0c0-0.82,0.665-1.484,1.484-1.484 h15.031C17.335,6.031,18,6.696,18,7.516L18,7.516z"/>
+          <path fill="#424242" d="M18,13.516C18,14.335,17.335,15,16.516,15H1.484C0.665,15,0,14.335,0,13.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.031C17.335,12.031,18,12.696,18,13.516L18,13.516z"/>
+        </svg>
+      </a>
+
+      <div class="trigger">
+        
+          
+        
+          
+        
+          
+        
+      </div>
+    </nav>
+
+  </div>
+
+</header>
+
+
+    <div class="page-content">
+      <div class="wrapper">
+        <div class="post">
+
+  <header class="post-header">
+    <h1 class="post-title">Yet Another Hadoop Build Tutorial for Windows</h1>
+    <p class="post-meta">Jan 15, 2015</p>
+  </header>
+
+  <article class="post-content">
+    <p>Building open source software which are targeting *nix system on Windows is painful. Today I spent several hours and a lot efforts on building hadoop-2.6.0 on my windows 8 X64 laptop. To avoid experience the pain again, it’s necessary to record the traps and how to workaround.</p>
+
+<h1 id="dependencies">Dependencies</h1>
+
+<ol>
+  <li><a href="http://hadoop.apache.org/releases.html#Download">hadoop 2.6.0 Source</a></li>
+  <li>Windows 8 x64</li>
+  <li><a href="http://www.visualstudio.com/news/vs2013-community-vs">Visual Studio 2013</a></li>
+  <li><a href="http://www.oracle.com/technetwork/java/javase/downloads/jdk7-downloads-1880260.html">JDK 7</a></li>
+  <li><a href="https://cygwin.com/install.html">Cygwin</a></li>
+  <li><a href="http://www.cmake.org/">CMake 3.1.0</a></li>
+  <li><a href="http://maven.apache.org/download.cgi">Maven 3.2.5</a></li>
+  <li><a href="https://code.google.com/p/protobuf/downloads/list">protobuf 2.5.0</a></li>
+  <li><a href="http://www.zlib.net/">Zlib</a>. I didn’t use Zlib to avoid the dll hell of VC’s runtime libraries among different versions and different thread/static/dynamic settings.</li>
+</ol>
+
+<h1 id="steps">Steps</h1>
+<ol>
+<li>
+Open hadoop-2.6.0-src\hadoop-common-project\hadoop-common\src\main\native\native.sln and hadoop-2.6.0-src\hadoop-common-project\hadoop-common\src\main\winutils\winutils.sln in VS 2013 and upgrade the project files to VS 2013.
+</li>
+<li>
+ Open hadoop-2.6.0-src\hadoop-hdfs-project\hadoop-hdfs\pom.xml and make the following changes
+
+<div class="highlight"><pre><code class="language-xml" data-lang="xml"><span class="lineno">1</span> <span class="c">&lt;!-- change from VS 2010 to VS 2013, see &#39;cmake -h&#39;</span>
+<span class="lineno">2</span> <span class="c">&lt;arg line=&quot;${basedir}/src/ -DGENERATED_JAVAH=${project.build.directory}/native/javah -DJVM_ARCH_DATA_MODEL=${sun.arch.data.model} -DREQUIRE_LIBWEBHDFS=${require.libwebhdfs} -DREQUIRE_FUSE=${require.fuse} -G &#39;Visual Studio 10 Win64&#39;&quot;/&gt;</span>
+<span class="lineno">3</span> <span class="c">--&gt;</span>
+<span class="lineno">4</span> <span class="nt">&lt;arg</span> <span class="na">line=</span><span class="s">&quot;${basedir}/src/ -DGENERATED_JAVAH=${project.build.directory}/native/javah -DJVM_ARCH_DATA_MODEL=${sun.arch.data.model} -DREQUIRE_LIBWEBHDFS=${require.libwebhdfs} -DREQUIRE_FUSE=${require.fuse} -G &#39;Visual Studio 12 Win64&#39;&quot;</span><span class="nt">/&gt;</span></code></pre></div>
+
+</li>
+<li>
+Remove readonly and add full control on hadoop source fodler for all users
+</li>
+<li>
+Add Visual Studio, JDK, Cygwin, CMake, Maven, protobuf's executables' path to PATH env.
+</li>
+<li>
+Launch 'cmd', enter the folder of hadoop source and type
+
+<div class="highlight"><pre><code class="language-bat" data-lang="bat"><span class="lineno">1</span> mvn package  -Pdist<span class="p">,</span>native-win -DskipTests -Dtar  -e -X</code></pre></div>
+
+</li>
+</ol>
+
+<h1 id="all-in-one-script">All in one script</h1>
+<p>To avoid the manually editing job in previous section, I created a script to automatically setting the PATH env, edit .pom file and update VS solutions. Feel free to use it and don’t forget to change the folder to point to your owns.</p>
+
+<div class="highlight"><pre><code class="language-bat" data-lang="bat"><span class="lineno"> 1</span> <span class="k">setlocal</span>
+<span class="lineno"> 2</span> <span class="k">call</span> <span class="s2">&quot;C:\Program Files (x86)\Microsoft Visual Studio 12.0\Common7\Tools\VsDevCmd.bat&quot;</span>
+<span class="lineno"> 3</span> 
+<span class="lineno"> 4</span> <span class="k">set</span> <span class="nv">CYGWIN_ROOT</span><span class="o">=</span>C:\cygwin<span class="m">64</span>
+<span class="lineno"> 5</span> <span class="k">set</span> <span class="nv">JAVA_HOME</span><span class="o">=</span>C:\PROGRA~<span class="m">1</span>\Java\JDK<span class="m">17</span>~<span class="m">1</span>.<span class="m">0</span>_<span class="m">7</span>
+<span class="lineno"> 6</span> <span class="k">set</span> <span class="nv">M2_HOME</span><span class="o">=</span>C:\tools\apache-maven<span class="m">-3</span>.<span class="m">2</span>.<span class="m">5</span>-bin
+<span class="lineno"> 7</span> <span class="k">set</span> <span class="nv">MS_BUILD_PATH</span><span class="o">=</span>C:\Windows\Microsoft.NET\Framework\v<span class="m">4</span>.<span class="m">0</span>.<span class="m">30319</span>
+<span class="lineno"> 8</span> <span class="k">set</span> <span class="nv">CMAKE_PATH</span><span class="o">=</span>C:\Program Files (x<span class="m">86</span>)\CMake
+<span class="lineno"> 9</span> <span class="k">set</span> <span class="nv">PROTOBUF_PATH</span><span class="o">=</span>C:\tools\protoc<span class="m">-2</span>.<span class="m">5</span>.<span class="m">0</span>-win<span class="m">32</span>
+<span class="lineno">10</span> <span class="k">set</span> <span class="nv">PATH</span><span class="o">=</span><span class="nv">%PROTOBUF_PATH%</span>;<span class="nv">%CMAKE_PATH%</span>\bin;<span class="nv">%MS_BUILD_PATH%</span>;<span class="nv">%M2_HOME%</span>\bin;<span class="nv">%CYGWIN_ROOT%</span>\bin;<span class="nv">%PATH%</span>
+<span class="lineno">11</span> <span class="k">set</span> <span class="nv">HADOOP_SRC</span><span class="o">=</span>hadoop<span class="m">-2</span>.<span class="m">6</span>.<span class="m">0</span>-src
+<span class="lineno">12</span> sed -i -e <span class="s2">&quot;s/Visual Studio 10 Win64/Visual Studio 12 Win64/&quot;</span> <span class="nv">%HADOOP_SRC%</span>\hadoop-hdfs-project\hadoop-hdfs\pom.xml
+<span class="lineno">13</span> <span class="k">for</span> <span class="nv">%%i</span> in (<span class="nv">%HADOOP_SRC%</span>\hadoop-common-project\hadoop-common\src\main\native\native.sln <span class="nv">%HADOOP_SRC%</span>\hadoop-common-project\hadoop-common\src\main\winutils\winutils.sln) <span class="k">do</span> (
+<span class="lineno">14</span>     devenv <span class="n">/Upgrade</span> <span class="nv">%%i</span>
+<span class="lineno">15</span> )
+<span class="lineno">16</span> pushd hadoop<span class="m">-2</span>.<span class="m">6</span>.<span class="m">0</span>-src
+<span class="lineno">17</span> attrib * -R <span class="n">/S</span>
+<span class="lineno">18</span> icacls * <span class="n">/grant</span> Everyone:(OI)(CI)F
+<span class="lineno">19</span> <span class="k">set</span> <span class="nv">log</span><span class="o">=</span>..\mvn.log
+<span class="lineno">20</span> mvn package  -Pdist<span class="p">,</span>native-win -DskipTests -Dtar  -e -X &gt;&gt; <span class="nv">%log%</span> <span class="m">2</span>&gt;&amp;<span class="m">1</span>
+<span class="lineno">21</span> popd</code></pre></div>
+
+<h1 id="references">References</h1>
+<p><a href="http://www.datadansandler.com/2013/09/building-hadoop-on-windows.html">Building Hadoop on Windows by Dan Sandler</a></p>
+
+  </article>
+
+</div>
+
+      </div>
+    </div>
+
+    <footer class="site-footer">
+
+  <div class="wrapper">
+
+    <h2 class="footer-heading">QAMichaelPeng</h2>
+
+    <div class="footer-col-wrapper">
+      <div class="footer-col  footer-col-1">
+        <ul class="contact-list">
+          <li>QAMichaelPeng</li>
+          <li><a href="mailto:Not Available">Not Available</a></li>
+        </ul>
+      </div>
+
+      <div class="footer-col  footer-col-2">
+        <ul class="social-media-list">
+          
+          <li>
+            <a href="https://github.com/QAMichaelPeng">
+              <span class="icon  icon--github">
+                <svg viewBox="0 0 16 16">
+                  <path fill="#828282" d="M7.999,0.431c-4.285,0-7.76,3.474-7.76,7.761 c0,3.428,2.223,6.337,5.307,7.363c0.388,0.071,0.53-0.168,0.53-0.374c0-0.184-0.007-0.672-0.01-1.32 c-2.159,0.469-2.614-1.04-2.614-1.04c-0.353-0.896-0.862-1.135-0.862-1.135c-0.705-0.481,0.053-0.472,0.053-0.472 c0.779,0.055,1.189,0.8,1.189,0.8c0.692,1.186,1.816,0.843,2.258,0.645c0.071-0.502,0.271-0.843,0.493-1.037 C4.86,11.425,3.049,10.76,3.049,7.786c0-0.847,0.302-1.54,0.799-2.082C3.768,5.507,3.501,4.718,3.924,3.65 c0,0,0.652-0.209,2.134,0.796C6.677,4.273,7.34,4.187,8,4.184c0.659,0.003,1.323,0.089,1.943,0.261 c1.482-1.004,2.132-0.796,2.132-0.796c0.423,1.068,0.157,1.857,0.077,2.054c0.497,0.542,0.798,1.235,0.798,2.082 c0,2.981-1.814,3.637-3.543,3.829c0.279,0.24,0.527,0.713,0.527,1.437c0,1.037-0.01,1.874-0.01,2.129 c0,0.208,0.14,0.449,0.534,0.373c3.081-1.028,5.302-3.935,5.302-7.362C15.76,3.906,12.285,0.431,7.999,0.431z"/>
+                </svg>
+              </span>
+
+              <span class="username">QAMichaelPeng</span>
+            </a>
+          </li>
+          
+
+          
+        </ul>
+      </div>
+
+      <div class="footer-col  footer-col-3">
+        <p class="text">Thinking, coding.
+</p>
+      </div>
+    </div>
+
+  </div>
+
+</footer>
+
+
+  </body>
+
+</html>

@@ -12,3 +12,5 @@ github_username: QAMichaelPeng
 markdown: kramdown
 highlighter: pygments
 exclude: [draft/]
+encoding: utf-8
+
