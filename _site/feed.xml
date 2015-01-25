@@ -6,9 +6,48 @@
 </description>
     <link>http://QAMichaelPeng.github.io/</link>
     <atom:link href="http://QAMichaelPeng.github.io/feed.xml" rel="self" type="application/rss+xml" />
-    <pubDate>Sat, 17 Jan 2015 08:34:02 -0800</pubDate>
-    <lastBuildDate>Sat, 17 Jan 2015 08:34:02 -0800</lastBuildDate>
+    <pubDate>Sat, 24 Jan 2015 21:42:10 -0800</pubDate>
+    <lastBuildDate>Sat, 24 Jan 2015 21:42:10 -0800</lastBuildDate>
     <generator>Jekyll v2.4.0</generator>
+    
+      <item>
+        <title>翻译|YARN overview</title>
+        <description>&lt;p&gt;MapReduce在hadoop-0.23经过了彻底改造，现在变成了MapReduce 2.0(MRv2)，或者YARN。&lt;/p&gt;
+
+&lt;p&gt;YARN的基础理念是将JobTracker两个基本功能，资源管理与作业调度监控拆分到两个独立的守护进程中。一个全局的ResourceManager(RM)负责资源分配，每个应用有一个ApplicationMaster(AM)。一个应用可以是传统意思上的一个MapReduce作业，或者是一个有向无环的作业集合。&lt;/p&gt;
+
+&lt;p&gt;ResourceManager和每个节点上的NodeManager(NM)构成了数据计算框架。ResourceManager是在系统里所有的应用中分配资源的唯一权威。&lt;/p&gt;
+
+&lt;p&gt;每个应用的ApplicaitonMaster,实际上是框架相关的库。主要承担与ResourceManager协调资源和在NodeManager上执行和监控任务。&lt;/p&gt;
+
+&lt;p&gt;&lt;img src=&quot;http://hadoop.apache.org/docs/current/hadoop-yarn/hadoop-yarn-site/yarn_architecture.gif&quot; alt=&quot;Yarn Architecture&quot; /&gt;&lt;/p&gt;
+
+&lt;p&gt;ResouceManager有两个主要组件：Scheduler和ApplicationsManager.&lt;/p&gt;
+
+&lt;p&gt;Scheduler负责在一定的限制条件，如容量，队列等之下为不同的应用分配资源。Scheduler是纯的scheduler，不负责监控或追踪应用状态。同样，它也不保证因为应用失败或硬件失败而重启应用。&lt;/p&gt;
+
+&lt;p&gt;Scheduler通过响应应用的资源请求来完成资源调度。这些都基于把memory, CPU, disk, network等抽象为一个资源容器(container)。在第一版中，只用到了内存资源。&lt;/p&gt;
+
+&lt;p&gt;Scheduler有一个可插拔的策略插件负责将集群资源在不同的队列和应用中分配。当前MapReduce的scheduler,如CapacityScheduler和FairScheduler都是这种插件的实例。&lt;/p&gt;
+
+&lt;p&gt;CapacityScheduler支持层次化队列(hierarchical)来使集群中的资源共享更加可预测。&lt;/p&gt;
+
+&lt;p&gt;ApplicationsManager负责处理作业提交，获得第一个容器以执行应用相关的ApplicationMaster并提供当ApplicationMaster失败时重启的服务。&lt;/p&gt;
+
+&lt;p&gt;NodeManager是每台机器上的框架代理，负责管理容器，监控容器的资源使用（cpu,内存，硬盘，网络)并向ResourceManager/Scheduler报告。&lt;/p&gt;
+
+&lt;p&gt;每应用ApplicationMaster负责从scheduler处获得容器所需的资源，跟踪容器状态和监控进度。&lt;/p&gt;
+
+&lt;p&gt;MRV2维护了和之前稳定版本(hadoop-1.x)的API兼容性。这意味着所有的Map-Reduce作业可以不需修改，在MRv2下重编译后即可运行。&lt;/p&gt;
+
+&lt;p&gt;本文翻译自 &lt;a href=&quot;http://hadoop.apache.org/docs/current/hadoop-yarn/hadoop-yarn-site/YARN.html&quot;&gt;Apache Hadoop NextGen MapReduce (YARN)&lt;/a&gt;,遵循&lt;a href=&quot;http://www.apache.org/licenses/LICENSE-2.0&quot;&gt;Apache License 2.0&lt;/a&gt;.&lt;/p&gt;
+</description>
+        <pubDate>Sat, 24 Jan 2015 00:00:00 -0800</pubDate>
+        <link>http://QAMichaelPeng.github.io/2015/01/24/yarn_overview.html</link>
+        <guid isPermaLink="true">http://QAMichaelPeng.github.io/2015/01/24/yarn_overview.html</guid>
+        
+        
+      </item>
     
       <item>
         <title>Yet Another Hadoop Build Tutorial for Windows</title>
